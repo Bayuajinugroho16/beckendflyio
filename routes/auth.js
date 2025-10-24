@@ -135,7 +135,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// User Registration - TANPA AUTO LOGIN
 router.post('/register', async (req, res) => {
   let connection;
   
@@ -143,8 +142,9 @@ router.post('/register', async (req, res) => {
     const { username, email, password, phone } = req.body;
     
     console.log('📝 Registration attempt for:', username);
+    console.log('📧 Email received:', email); // Debug
     
-    // ✅ VALIDASI
+    // ✅ VALIDASI - TANPA EMAIL VALIDATION
     if (!validateInput(username) || !validateInput(password) || !validateInput(phone)) {
       return res.status(400).json({
         success: false,
@@ -152,18 +152,19 @@ router.post('/register', async (req, res) => {
       });
     }
     
-    // ✅ EMAIL OPSIONAL - GUNAKAN DEFAULT
+    // ✅ EMAIL BENAR-BENAR OPTIONAL - NO VALIDATION
     const userEmail = email && email.trim() !== '' ? email.trim() : `${username}@no-email.com`;
     
-    if (email && email.trim() !== '') {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Format email tidak valid'
-        });
-      }
-    }
+    // ❌ HAPUS EMAIL VALIDATION SECTION INI:
+    // if (email && email.trim() !== '') {
+    //   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    //   if (!emailRegex.test(email)) {
+    //     return res.status(400).json({
+    //       success: false,
+    //       message: 'Format email tidak valid'
+    //     });
+    //   }
+    // }
     
     if (password.length < 6) {
       return res.status(400).json({
@@ -197,9 +198,6 @@ router.post('/register', async (req, res) => {
         [username.trim(), userEmail, hashedPassword, phone.trim(), 'user']
       );
       
-      // ✅ HAPUS GENERATE TOKEN - TIDAK AUTO LOGIN
-      // const token = jwt.sign(...);
-      
       await connection.commit();
       
       console.log('✅ User registered successfully:', username);
@@ -215,8 +213,6 @@ router.post('/register', async (req, res) => {
             phone: phone.trim(),
             role: 'user'
           }
-          // ✅ HAPUS TOKEN DARI RESPONSE
-          // token: token
         }
       });
       
@@ -235,5 +231,4 @@ router.post('/register', async (req, res) => {
     if (connection) connection.release();
   }
 });
-
 module.exports = router;
