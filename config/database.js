@@ -58,4 +58,4 @@ if (process.env.NODE_ENV !== 'test') {
   testConnection();
 }
 
-export { pool };
+module.exports = { pool };
