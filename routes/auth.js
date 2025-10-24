@@ -2,8 +2,27 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/database');
+
+
+const mysql = require('mysql2');
+
 const router = express.Router();
-const { pool } = require('../config/db-common');
+
+
+
+// ✅ HARCODE DATABASE POOL LANGSUNG DI FILE INI
+const pool = mysql.createPool({
+  host: 'centerbeam.proxy.rlwy.net',
+  port: 41114,  
+  user: 'root',
+  password: 'uYyExIkZclwyHjudxMMgJeeDLPieicqy',
+  database: 'railway',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+console.log('🔌 Database pool CREATED IN auth.js with Railway');
 
 // Input validation helper
 const validateInput = (input) => {
@@ -155,17 +174,7 @@ router.post('/register', async (req, res) => {
     
     // ✅ EMAIL BENAR-BENAR OPTIONAL - NO VALIDATION
     const userEmail = email && email.trim() !== '' ? email.trim() : `${username}@no-email.com`;
-    
-    // ❌ HAPUS EMAIL VALIDATION SECTION INI:
-    // if (email && email.trim() !== '') {
-    //   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    //   if (!emailRegex.test(email)) {
-    //     return res.status(400).json({
-    //       success: false,
-    //       message: 'Format email tidak valid'
-    //     });
-    //   }
-    // }
+   
     
     if (password.length < 6) {
       return res.status(400).json({
@@ -230,6 +239,30 @@ router.post('/register', async (req, res) => {
     });
   } finally {
     if (connection) connection.release();
+  }
+});
+
+router.get('/test-connection', async (req, res) => {
+  try {
+    const connection = await pool.promise().getConnection();
+    const [result] = await connection.execute('SELECT 1 as test, NOW() as time');
+    connection.release();
+    
+    res.json({
+      success: true,
+      message: 'Database connected DIRECTLY from auth.js!',
+      data: result[0],
+      config: {
+        host: 'centerbeam.proxy.rlwy.net',
+        port: 41114,
+        database: 'railway'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 module.exports = router;
