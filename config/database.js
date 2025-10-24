@@ -4,18 +4,26 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // ✅ PASTIKAN database yang benar: cinema_booking
+
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'cinema_booking', // ✅ INI YANG PENTING!
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  charset: 'utf8mb4',
-  timezone: '+07:00' // Sesuaikan dengan timezone Anda
+  host: process.env.MYSQLHOST || 'localhost',
+  port: process.env.MYSQLPORT || 3306,
+  user: process.env.MYSQLUSER || 'root',
+  password: process.env.MYSQLPASSWORD || '',
+  database: process.env.MYSQLDATABASE || 'cinema_booking'
 };
+// const dbConfig = {
+//   host: process.env.DB_HOST || 'localhost',
+//   port: process.env.DB_PORT || 3306,
+//   user: process.env.DB_USER || 'root',
+//   password: process.env.DB_PASSWORD || '',
+//   database: process.env.DB_NAME || 'cinema_booking', // ✅ INI YANG PENTING!
+//   waitForConnections: true,
+//   connectionLimit: 10,
+//   queueLimit: 0,
+//   charset: 'utf8mb4',
+//   timezone: '+07:00' // Sesuaikan dengan timezone Anda
+// };
 const pool = mysql.createPool(dbConfig);
 
 // 🔍 Log koneksi awal

@@ -4,21 +4,17 @@ const http = require('http');
 const WebSocket = require('ws');
 const authRoutes = require('./routes/auth');
 
-
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-console.log('🚀 Starting server...');
-
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
-app.use('/api/auth', authRoutes);
 
-// ✅ BUAT HTTP SERVER DARI EXPRESS APP
+// ✅ HANYA BUAT 1 SERVER - HAPUS app.listen() YANG PERTAMA
 const server = http.createServer(app);
 
 // ✅ WEBSOCKET SERVER MENGGUNAKAN SERVER YANG SAMA
@@ -85,7 +81,6 @@ wss.on('connection', (ws, req) => {
     }
   });
   
-  // ✅ PASTIKAN INI DI DALAM 'connection' EVENT
   ws.on('close', () => {
     console.log(`🔌 WebSocket connection closed for showtime: ${ws.showtimeId}, user: ${ws.userEmail}`);
     
@@ -106,15 +101,12 @@ wss.on('connection', (ws, req) => {
     }
   });
   
-  // ✅ PASTIKAN INI JUGA DI DALAM 'connection' EVENT
   ws.on('error', (error) => {
     console.error('❌ WebSocket error:', error);
   });
 });
 
-// ✅ GLOBAL NOTIFICATION FUNCTIONS (taruh di server.js setelah WebSocket setup)
-
-// ✅ FUNCTION UNTUK BROADCAST NOTIFICATION KE SEMUA CLIENT
+// ✅ GLOBAL NOTIFICATION FUNCTIONS
 global.broadcastNotification = function(notificationData) {
   const message = JSON.stringify({
     type: 'NOTIFICATION',
@@ -136,7 +128,6 @@ global.broadcastNotification = function(notificationData) {
   return sentCount;
 };
 
-// ✅ FUNCTION UNTUK KIRIM NOTIFICATION KE USER TERTENTU
 global.sendNotificationToUser = function(userEmail, notificationData) {
   const message = JSON.stringify({
     type: 'NOTIFICATION',
@@ -158,7 +149,6 @@ global.sendNotificationToUser = function(userEmail, notificationData) {
   return sentCount;
 };
 
-// ✅ FUNCTION UNTUK MENDAPATKAN JUMLAH CLIENT TERKONEKSI
 global.getConnectedClientsCount = function() {
   let count = 0;
   wss.clients.forEach(client => {
@@ -167,7 +157,6 @@ global.getConnectedClientsCount = function() {
   return count;
 };
 
-// ✅ Function untuk broadcast seat update (bisa diakses dari route manapun)
 global.broadcastSeatUpdate = function(showtimeId, seatData) {
   if (!clients.has(showtimeId)) {
     console.log(`⚠️ No clients subscribed to showtime ${showtimeId}`);
@@ -197,11 +186,12 @@ global.broadcastSeatUpdate = function(showtimeId, seatData) {
 try {
   const movieRoutes = require('./routes/movies');
   const bookingRoutes = require('./routes/bookings');
-  const notificationRoutes = require('./routes/notifications'); // ✅ TAMBAHKAN INI
+  const notificationRoutes = require('./routes/notifications');
   
+  app.use('/api/auth', authRoutes);
   app.use('/api/movies', movieRoutes);
   app.use('/api/bookings', bookingRoutes);
-  app.use('/api/notifications', notificationRoutes); // ✅ TAMBAHKAN INI
+  app.use('/api/notifications', notificationRoutes);
   console.log('✅ Routes loaded successfully');
 } catch (error) {
   console.error('❌ Route loading failed:', error);
@@ -213,31 +203,12 @@ app.get('/', (req, res) => {
     message: '🎬 Cinema Booking API is RUNNING!',
     timestamp: new Date().toISOString(),
     status: 'OK',
-    websocket: 'Active on /ws'
+    websocket: 'Active on /ws',
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('🚨 Server error:', err);
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error'
-  });
-});
-
-// Handle 404
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    error: `Route ${req.originalUrl} not found`
-  });
-});
-
-// ✅ PRODUCTION OPTIMIZATIONS FOR RAILWAY
-const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
-
-// ✅ HEALTH CHECK ENDPOINT (WAJIB untuk Railway)
+// ✅ HEALTH CHECK ENDPOINT (WAJIB untuk Vercel/Railway)
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -276,134 +247,38 @@ app.get('/api/debug/db', async (req, res) => {
   }
 });
 
-// ✅ INITIALIZE DATABASE TABLES
-app.get('/api/debug/init-db', async (req, res) => {
-  try {
-    const { pool } = require('./config/database');
-    const connection = await pool.promise().getConnection();
-    
-    console.log('🗄️ Initializing database tables...');
-    
-    // Create users table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        phone VARCHAR(20),
-        role ENUM('user', 'admin') DEFAULT 'user',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    // Create bookings table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS bookings (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        showtime_id INT NOT NULL,
-        customer_name VARCHAR(100) NOT NULL,
-        customer_email VARCHAR(100) NOT NULL,
-        customer_phone VARCHAR(20),
-        total_amount DECIMAL(10,2) NOT NULL,
-        seat_numbers JSON,
-        booking_reference VARCHAR(50) UNIQUE NOT NULL,
-        verification_code VARCHAR(50) UNIQUE NOT NULL,
-        movie_title VARCHAR(255) NOT NULL,
-        status ENUM('pending', 'confirmed', 'cancelled') DEFAULT 'pending',
-        is_verified BOOLEAN DEFAULT FALSE,
-        verified_at TIMESTAMP NULL,
-        booking_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    // Create movies table
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS movies (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        duration INT,
-        genre VARCHAR(100),
-        rating DECIMAL(3,1),
-        poster_url VARCHAR(500),
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    // Insert sample movies
-    await connection.execute(`
-      INSERT IGNORE INTO movies (id, title, description, duration, genre, rating) VALUES
-      (1, 'The Batman', 'Batman melawan penjahat di Gotham City', 176, 'Action', 8.1),
-      (2, 'Avatar: The Way of Water', 'Petualangan di planet Pandora', 192, 'Adventure', 7.6)
-    `);
-    
-    // Insert admin user if not exists
-    await connection.execute(`
-      INSERT IGNORE INTO users (username, email, password, role) VALUES 
-      ('admin', 'admin@bioskop.com', 'admin123', 'admin')
-    `);
-    
-    connection.release();
-    
-    console.log('✅ Database tables initialized successfully!');
-    
-    res.json({
-      success: true,
-      message: 'Database tables created and sample data inserted!'
-    });
-  } catch (error) {
-    console.error('Database init error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Database initialization failed: ' + error.message
-    });
-  }
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('🚨 Server error:', err);
+  res.status(500).json({
+    success: false,
+    error: 'Internal server error'
+  });
 });
 
-app.get('/api/debug/users', async (req, res) => {
-  try {
-    const { pool } = require('./config/database');
-    const connection = await pool.promise().getConnection();
-    const [users] = await connection.execute('SELECT id, username, email, role FROM users');
-    connection.release();
-    
-    res.json({
-      success: true,
-      data: users,
-      total: users.length
-    });
-  } catch (error) {
-    console.error('Users fetch error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch users: ' + error.message
-    });
-  }
+// Handle 404
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `Route ${req.originalUrl} not found`
+  });
 });
 
 // ✅ START SERVER YANG SAMA UNTUK BOTH HTTP & WEBSOCKET
-server.listen(PORT, () => {
-  console.log(`⚡ Server running on http://localhost:${PORT}`);
+// HAPUS: app.listen() yang di atas, gunakan ini saja
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`⚡ Server running on port ${PORT}`);
   console.log(`🔌 WebSocket available on ws://localhost:${PORT}/ws`);
   console.log(`⏰ Started at: ${new Date().toLocaleTimeString()}`);
   
   // Debug: Show registered routes
   console.log('🔄 Registered routes:');
   console.log('   GET  /');
+  console.log('   GET  /health');
   console.log('   POST /api/auth/login');
   console.log('   POST /api/auth/register');
-  console.log('   POST /api/bookings');
-  console.log('   GET  /api/bookings/occupied-seats');
-  console.log('   POST /api/bookings/confirm-payment');
-  console.log('   POST /api/bookings/scan-ticket');
-  console.log('   GET  /api/bookings');
-  console.log('   GET  /api/bookings/my-bookings');
-  console.log('   POST /api/notifications/broadcast');
-  console.log('   POST /api/notifications/send-to-user');
-  console.log('   POST /api/notifications/send-to-movie-audience');
-  console.log('   GET  /api/notifications/history');
-  console.log('   GET  /api/notifications/connected-clients');
-  console.log('   POST /api/notifications/system/:template');
+  console.log('   GET  /api/debug/db');
 });
+
+// ✅ Export untuk Vercel
+module.exports = app;

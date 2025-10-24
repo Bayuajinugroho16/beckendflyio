@@ -14,73 +14,81 @@ router.post('/login', async (req, res) => {
   let connection;
   
   try {
+    console.log('🔍 DEBUG: Request body received:', req.body);
+    console.log('🔍 DEBUG: Headers:', req.headers);
+    
     const { username, password } = req.body;
     
     // ✅ Validasi input
     if (!validateInput(username) || !validateInput(password)) {
+      console.log('❌ DEBUG: Validation failed');
       return res.status(400).json({
         success: false,
         message: 'Username and password are required'
       });
     }
     
-    console.log('🔐 Login attempt for:', username);
+    console.log('🔐 DEBUG: Login attempt for:', username);
     
+    // ✅ Test database connection
     connection = await pool.promise().getConnection();
+    console.log('✅ DEBUG: Database connected successfully');
     
-    // ✅ Find user by username dengan kolom yang spesifik (hindari SELECT *)
+    // ✅ Find user
     const [users] = await connection.execute(
       'SELECT id, username, email, password, role, phone FROM users WHERE username = ?',
       [username.trim()]
     );
     
+    console.log(`🔍 DEBUG: Users found: ${users.length}`);
+    
     if (users.length === 0) {
-      console.log('❌ User not found:', username);
-      return res.status(401).json({ // ✅ 401 untuk unauthorized
-        success: false,
-        message: 'Invalid username or password'
-      });
-    }
-    
-    const user = users[0];
-    console.log('✅ User found:', user.username);
-    
-    // ✅ ENHANCED PASSWORD VALIDATION
-    let validPassword = false;
-    
-    // Deteksi tipe password
-    const isLikelyHashed = user.password.length === 60 && user.password.startsWith('$2');
-    
-    if (isLikelyHashed) {
-      // Bcrypt hashed password
-      console.log('🔐 Using bcrypt comparison');
-      validPassword = await bcrypt.compare(password, user.password);
-    } else {
-      // Plain text password (for migration purposes)
-      console.log('🔓 Using plain text comparison');
-      validPassword = (password === user.password);
-      
-      // ✅ OPSIONAL: Auto-upgrade ke hashed password jika plain text terdeteksi
-      if (validPassword) {
-        console.log('🔄 Auto-upgrading plain text password to hash...');
-        const hashedPassword = await bcrypt.hash(password, 10);
-        await connection.execute(
-          'UPDATE users SET password = ? WHERE id = ?',
-          [hashedPassword, user.id]
-        );
-        console.log('✅ Password upgraded to hash');
-      }
-    }
-    
-    if (!validPassword) {
-      console.log('❌ Password mismatch');
+      console.log('❌ DEBUG: User not found');
       return res.status(401).json({
         success: false,
         message: 'Invalid username or password'
       });
     }
     
-    // ✅ Generate token dengan data yang lebih aman
+    const user = users[0];
+    console.log('✅ DEBUG: User found - ID:', user.id, 'Username:', user.username);
+    console.log('🔍 DEBUG: Password in DB:', user.password ? 'Exists' : 'Missing');
+    console.log('🔍 DEBUG: Password length:', user.password?.length);
+    
+    // ✅ Password validation
+    let validPassword = false;
+    const isLikelyHashed = user.password.length === 60 && user.password.startsWith('$2');
+    
+    console.log('🔍 DEBUG: Password type:', isLikelyHashed ? 'Hashed' : 'Plain text');
+    
+    if (isLikelyHashed) {
+      validPassword = await bcrypt.compare(password, user.password);
+      console.log('🔐 DEBUG: Bcrypt comparison result:', validPassword);
+    } else {
+      validPassword = (password === user.password);
+      console.log('🔓 DEBUG: Plain text comparison result:', validPassword);
+      
+      // Auto-upgrade jika plain text
+      if (validPassword) {
+        console.log('🔄 DEBUG: Auto-upgrading plain text password...');
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await connection.execute(
+          'UPDATE users SET password = ? WHERE id = ?',
+          [hashedPassword, user.id]
+        );
+        console.log('✅ DEBUG: Password upgraded to hash');
+      }
+    }
+    
+    if (!validPassword) {
+      console.log('❌ DEBUG: Password invalid');
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid username or password'
+      });
+    }
+    
+    // ✅ Generate token
     const token = jwt.sign(
       { 
         userId: user.id, 
@@ -91,9 +99,8 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    console.log('🎉 Login successful for:', user.username);
+    console.log('🎉 DEBUG: Login successful, token generated');
     
-    // ✅ Response konsisten tanpa mengekspos password
     res.json({
       success: true,
       message: 'Login successful',
@@ -110,17 +117,24 @@ router.post('/login', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('💥 Login error:', error);
+    console.error('💥 DEBUG: Login error details:', error);
+    console.error('💥 DEBUG: Error stack:', error.stack);
+    
+    // ✅ Berikan info error yang lebih spesifik
     res.status(500).json({
       success: false,
-      message: 'Internal server error during login'
-      // Jangan expose detail error ke client di production
+      message: `Login error: ${error.message}`,
+      // Hapus detail ini di production
+      debug: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   } finally {
-    if (connection) connection.release();
+    if (connection) {
+      connection.release();
+      console.log('🔗 DEBUG: Database connection released');
+    }
   }
 });
-  
+
 // User Registration - TANPA AUTO LOGIN
 router.post('/register', async (req, res) => {
   let connection;
