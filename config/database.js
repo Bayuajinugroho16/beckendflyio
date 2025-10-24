@@ -10,7 +10,7 @@ const dbConfig = {
   port: process.env.MYSQLPORT || 3306,
   user: process.env.MYSQLUSER || 'root',
   password: process.env.MYSQLPASSWORD || '',
-  database: process.env.MYSQLDATABASE || 'cinema_booking'
+  database: process.env.MYSQLDATABASE || 'railway'
 };
 // const dbConfig = {
 //   host: process.env.DB_HOST || 'localhost',
