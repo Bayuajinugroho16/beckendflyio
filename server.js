@@ -264,6 +264,32 @@ app.use('*', (req, res) => {
   });
 });
 
+// server.js - tambahkan test
+app.get('/api/debug-db', async (req, res) => {
+  try {
+    const { pool } = require('./config/db-common');
+    const connection = await pool.promise().getConnection();
+    const [result] = await connection.execute('SELECT 1 as test');
+    connection.release();
+    
+    res.json({ 
+      success: true, 
+      message: 'Database connected via db-common.js!',
+      data: result[0]
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      config: {
+        host: 'centerbeam.proxy.rlwy.net',
+        port: 41114,
+        database: 'railway'
+      }
+    });
+  }
+});
+
 // ✅ START SERVER YANG SAMA UNTUK BOTH HTTP & WEBSOCKET
 // HAPUS: app.listen() yang di atas, gunakan ini saja
 server.listen(PORT, '0.0.0.0', () => {
