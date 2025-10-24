@@ -1,10 +1,14 @@
-const express = require('express');
-const cors = require('cors');
-const http = require('http');
-const WebSocket = require('ws');
-const authRoutes = require('./routes/auth');
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import dotenv from 'dotenv';
+import authRoutes from './routes/auth.js';
+import movieRoutes from './routes/movies.js';
+import bookingRoutes from './routes/bookings.js';
+import notificationRoutes from './routes/notifications.js';
 
-require('dotenv').config();
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -14,13 +18,13 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// ✅ HANYA BUAT 1 SERVER - HAPUS app.listen() YANG PERTAMA
+// ✅ BUAT SERVER
 const server = http.createServer(app);
 
-// ✅ WEBSOCKET SERVER MENGGUNAKAN SERVER YANG SAMA
-const wss = new WebSocket.Server({ 
-  server, // Gunakan server HTTP yang sama
-  path: '/ws' // Optional: path khusus untuk WebSocket
+// ✅ WEBSOCKET SERVER
+const wss = new WebSocketServer({ 
+  server,
+  path: '/ws'
 });
 
 // Store connected clients per showtime
@@ -34,7 +38,7 @@ wss.on('connection', (ws, req) => {
   // Extract showtime dan user email dari query parameters
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showtime = url.searchParams.get('showtime');
-  const userEmail = url.searchParams.get('userEmail'); // Untuk notifikasi personal
+  const userEmail = url.searchParams.get('userEmail');
   
   if (showtime) {
     if (!clients.has(showtime)) {
@@ -53,7 +57,7 @@ wss.on('connection', (ws, req) => {
     }));
   }
   
-  // Store user email jika ada (untuk notifikasi personal)
+  // Store user email jika ada
   if (userEmail) {
     ws.userEmail = userEmail;
     if (!userConnections.has(userEmail)) {
@@ -183,19 +187,11 @@ global.broadcastSeatUpdate = function(showtimeId, seatData) {
 };
 
 // ✅ LOAD ROUTES
-try {
-  const movieRoutes = require('./routes/movies');
-  const bookingRoutes = require('./routes/bookings');
-  const notificationRoutes = require('./routes/notifications');
-  
-  app.use('/api/auth', authRoutes);
-  app.use('/api/movies', movieRoutes);
-  app.use('/api/bookings', bookingRoutes);
-  app.use('/api/notifications', notificationRoutes);
-  console.log('✅ Routes loaded successfully');
-} catch (error) {
-  console.error('❌ Route loading failed:', error);
-}
+app.use('/api/auth', authRoutes);
+app.use('/api/movies', movieRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/notifications', notificationRoutes);
+console.log('✅ Routes loaded successfully');
 
 // Basic route
 app.get('/', (req, res) => {
@@ -208,7 +204,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// ✅ HEALTH CHECK ENDPOINT (WAJIB untuk Vercel/Railway)
+// ✅ HEALTH CHECK ENDPOINT
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -223,7 +219,7 @@ app.get('/health', (req, res) => {
 // ✅ DATABASE TEST ENDPOINT
 app.get('/api/debug/db', async (req, res) => {
   try {
-    const { pool } = require('./config/database');
+    const { pool } = await import('./config/database.js');
     const connection = await pool.promise().getConnection();
     const [result] = await connection.execute('SELECT NOW() as time, DATABASE() as db, USER() as user');
     connection.release();
@@ -231,12 +227,7 @@ app.get('/api/debug/db', async (req, res) => {
     res.json({
       success: true,
       message: 'Database connection successful!',
-      data: result[0],
-      environment: {
-        host: process.env.MYSQLHOST || process.env.DB_HOST,
-        database: process.env.MYSQLDATABASE || process.env.DB_NAME,
-        node_env: process.env.NODE_ENV
-      }
+      data: result[0]
     });
   } catch (error) {
     console.error('Database test error:', error);
@@ -264,47 +255,12 @@ app.use('*', (req, res) => {
   });
 });
 
-// server.js - tambahkan test
-app.get('/api/debug-db', async (req, res) => {
-  try {
-    const { pool } = require('./config/db-common');
-    const connection = await pool.promise().getConnection();
-    const [result] = await connection.execute('SELECT 1 as test');
-    connection.release();
-    
-    res.json({ 
-      success: true, 
-      message: 'Database connected via db-common.js!',
-      data: result[0]
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      config: {
-        host: 'centerbeam.proxy.rlwy.net',
-        port: 41114,
-        database: 'railway'
-      }
-    });
-  }
-});
-
-// ✅ START SERVER YANG SAMA UNTUK BOTH HTTP & WEBSOCKET
-// HAPUS: app.listen() yang di atas, gunakan ini saja
+// ✅ START SERVER
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`⚡ Server running on port ${PORT}`);
   console.log(`🔌 WebSocket available on ws://localhost:${PORT}/ws`);
   console.log(`⏰ Started at: ${new Date().toLocaleTimeString()}`);
-  
-  // Debug: Show registered routes
-  console.log('🔄 Registered routes:');
-  console.log('   GET  /');
-  console.log('   GET  /health');
-  console.log('   POST /api/auth/login');
-  console.log('   POST /api/auth/register');
-  console.log('   GET  /api/debug/db');
 });
 
-// ✅ Export untuk Vercel
-module.exports = app;
+// ✅ ESM EXPORT
+export default app;

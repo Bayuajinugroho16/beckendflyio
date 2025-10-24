@@ -1,28 +1,13 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { pool } = require('../config/database');
-
-
-const mysql = require('mysql2');
+import express from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { pool } from '../config/database.js'; // ✅ .js extension
 
 const router = express.Router();
 
+const mysql = require('mysql2');
 
 
-// ✅ HARCODE DATABASE POOL LANGSUNG DI FILE INI
-const pool = mysql.createPool({
-  host: 'centerbeam.proxy.rlwy.net',
-  port: 41114,  
-  user: 'root',
-  password: 'uYyExIkZclwyHjudxMMgJeeDLPieicqy',
-  database: 'railway',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
-console.log('🔌 Database pool CREATED IN auth.js with Railway');
 
 // Input validation helper
 const validateInput = (input) => {

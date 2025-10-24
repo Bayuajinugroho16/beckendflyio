@@ -5,7 +5,6 @@ dotenv.config();
 
 // ✅ PASTIKAN database yang benar: cinema_booking
 
-// ✅ HARCODE SEMUA CREDENTIALS RAILWAY
 const dbConfig = {
   host: 'centerbeam.proxy.rlwy.net',
   port: 41114,  
@@ -58,4 +57,4 @@ if (process.env.NODE_ENV !== 'test') {
   testConnection();
 }
 
-module.exports = { pool };
+export { pool };
