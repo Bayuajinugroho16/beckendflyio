@@ -5,19 +5,18 @@ import { pool } from '../config/database.js';
 
 
 const router = express.Router();
-
-
-// ✅ GUNAKAN MEMORY STORAGE UNTUK VERCELL
+// ✅ MULTER CONFIGURATION FOR MEMORY STORAGE (VERCEL COMPATIBLE)
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-  fileFilter: function (req, file, cb) {
-    // Hanya terima image dan PDF
-    if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Only images and PDF files are allowed!'), false);
+      cb(new Error('Only image files are allowed'), false);
     }
   }
 });
@@ -562,83 +561,78 @@ router.post('/scan-ticket', async (req, res) => {
 
 
 // ✅ UPDATE UPLOAD PAYMENT (REGULER) - SIMPAN BASE64 KE DB
+// ✅ UPLOAD PAYMENT PROOF - BASE64 SOLUTION (FIXED FOR VERCELL)
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
-    let connection;
-    try {
-        console.log('📁 Payment proof upload received (Memory Storage)');
-        
-        if (!req.file) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'No file uploaded' 
-            });
-        }
-        
-        if (!req.body.booking_reference) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Booking reference is required' 
-            });
-        }
-        
-        // --- LOGIC PENYIMPANAN BASE64 (SOLUSI VERCEL TANPA S3) ---
-        const fileBuffer = req.file.buffer;
-        // Konversi Buffer file menjadi string Base64
-        const base64Data = fileBuffer.toString('base64'); 
-        
-        // Ambil metadata
-        const fileNameToSave = req.file.originalname; 
-        const mimeTypeToSave = req.file.mimetype; 
-        // --- END LOGIC ---
-
-        console.log('📸 File converted to Base64. Size:', base64Data.length);
-        
-        connection = await pool.promise().getConnection();
-        
-        // ✅ UPDATE BOOKINGS TABLE:
-        // Anda harus memastikan tabel 'bookings' memiliki kolom: 
-        // 1. payment_base64 (Tipe TEXT atau LONGTEXT)
-        // 2. payment_mimetype (Tipe VARCHAR)
-        // 3. payment_filename (Tipe VARCHAR)
-        const [result] = await connection.execute(
-            `UPDATE bookings SET 
-                payment_proof = ?, payment_filename = ?, payment_mimetype = ?, 
-                payment_base64 = ?, status = 'pending', payment_date = CURRENT_TIMESTAMP
-             WHERE booking_reference = ?`,
-            [
-                fileNameToSave, 
-                fileNameToSave, // Nama file untuk tampilan
-                mimeTypeToSave, 
-                base64Data, // Data Base64
-                req.body.booking_reference
-            ]
-        );
-        
-        if (result.affectedRows === 0) {
-             // ... (handle booking not found) ...
-        }
-        
-        console.log('✅ Payment proof saved as Base64 for booking:', req.body.booking_reference);
-        
-        res.json({
-            success: true,
-            message: 'Payment proof uploaded successfully (Saved to DB as Base64)',
-            fileName: fileNameToSave,
-            base64Size: base64Data.length
-        });
-        
-    } catch (error) {
-        console.error('❌ Upload error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Upload failed: ' + error.message 
-        });
-    } finally {
-        if (connection) connection.release();
+  let connection;
+  try {
+    console.log('📁 Payment proof upload received');
+    
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No file uploaded' 
+      });
     }
+    
+    if (!req.body.booking_reference) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Booking reference is required' 
+      });
+    }
+    
+    // ✅ CONVERT FILE TO BASE64 (SOLUSI UNTUK VERCELL)
+    const fileBuffer = req.file.buffer;
+    const base64Image = fileBuffer.toString('base64');
+    const fileName = `payment-${Date.now()}-${req.file.originalname}`;
+    
+    console.log('📸 File converted to base64:', {
+      filename: fileName,
+      originalname: req.file.originalname,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      base64Length: base64Image.length
+    });
+    
+    connection = await pool.promise().getConnection();
+    
+    // ✅ SIMPAN BASE64 + FILENAME DI DATABASE
+    const [result] = await connection.execute(
+      'UPDATE bookings SET payment_proof = ?, payment_filename = ?, payment_base64 = ?, mimetype = ? WHERE booking_reference = ?',
+      [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+    
+    console.log('✅ Payment proof saved as base64 for booking:', req.body.booking_reference);
+    
+    res.json({
+      success: true,
+      message: 'Payment proof uploaded successfully',
+      fileName: fileName,
+      originalName: req.file.originalname,
+      base64Size: base64Image.length,
+      bookingReference: req.body.booking_reference
+    });
+    
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Upload failed: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  } finally {
+    if (connection) connection.release();
+  }
 });
 
-// ✅ GET PAYMENT IMAGE - PAKAI BASE64 (SUDAH BENAR)
+// ✅ GET PAYMENT IMAGE FOR ADMIN
 router.get('/payment-image/:bookingReference', async (req, res) => {
   let connection;
   try {
@@ -660,14 +654,11 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
     
     const booking = bookings[0];
     
-    // ✅ PAKAI BASE64 DARI DATABASE - JANGAN FILE SYSTEM
+    // ✅ KONVERSI BASE64 KEMBALI KE IMAGE
     const imgBuffer = Buffer.from(booking.payment_base64, 'base64');
     
-    // ✅ GUNAKAN MIMETYPE YANG TEPAT
-    const mimeType = booking.mimetype || 'image/jpeg';
-    
     res.set({
-      'Content-Type': mimeType,
+      'Content-Type': booking.mimetype || 'image/jpeg',
       'Content-Length': imgBuffer.length,
       'Content-Disposition': `inline; filename="${booking.payment_filename}"`
     });
@@ -878,7 +869,8 @@ router.get('/my-bookings', async (req, res) => {
         if (connection) connection.release();
     }
 });
-// ✅ GET UPLOADED PAYMENT PROOFS - HAPUS REFERENSI FILE SYSTEM
+
+// ✅ GET UPLOADED PAYMENT PROOFS FOR ADMIN
 router.get('/uploaded-payments', async (req, res) => {
   let connection;
   try {
@@ -891,7 +883,6 @@ router.get('/uploaded-payments', async (req, res) => {
         movie_title,
         total_amount,
         payment_filename,
-        payment_base64,
         status,
         booking_date
       FROM bookings 
@@ -901,22 +892,10 @@ router.get('/uploaded-payments', async (req, res) => {
     
     console.log('💰 Uploaded payments found:', payments.length);
     
-    // ✅ HAPUS INFO FILE PATH, GUNAKAN BASE64 SAJA
-    const paymentList = payments.map(payment => ({
-      booking_reference: payment.booking_reference,
-      customer_name: payment.customer_name,
-      movie_title: payment.movie_title,
-      total_amount: payment.total_amount,
-      payment_filename: payment.payment_filename,
-      has_image: !!payment.payment_base64,
-      status: payment.status,
-      booking_date: payment.booking_date
-    }));
-    
     res.json({
       success: true,
-      count: paymentList.length,
-      data: paymentList
+      count: payments.length,
+      data: payments
     });
     
   } catch (error) {
