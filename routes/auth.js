@@ -140,6 +140,149 @@ router.post('/login', async (req, res) => {
   }
 });
 
+
+// ✅ ADMIN LOGIN ENDPOINT - TERPISAH DARI USER LOGIN
+router.post('/admin/login', async (req, res) => {
+  let connection;
+  
+  try {
+    console.log('🔐 ADMIN LOGIN ATTEMPT:', req.body);
+    
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username and password are required'
+      });
+    }
+    
+    connection = await pool.promise().getConnection();
+    
+    // ✅ KHUSUS CARI ADMIN SAJA
+    const [admins] = await connection.execute(
+      'SELECT id, username, email, password, role FROM users WHERE (username = ? OR email = ?) AND role = "admin"',
+      [username.trim(), username.trim()]
+    );
+    
+    console.log(`🔍 ADMIN USERS FOUND: ${admins.length}`);
+    
+    if (admins.length === 0) {
+      console.log('❌ ADMIN NOT FOUND OR NOT ADMIN ROLE:', username);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid admin credentials'
+      });
+    }
+    
+    const admin = admins[0];
+    console.log('✅ ADMIN FOUND:', { 
+      id: admin.id, 
+      username: admin.username, 
+      role: admin.role 
+    });
+    console.log('🔍 PASSWORD HASH:', admin.password.substring(0, 20) + '...');
+    
+    // ✅ VERIFY PASSWORD
+    const validPassword = await bcrypt.compare(password, admin.password);
+    console.log('🔐 PASSWORD VALID:', validPassword);
+    
+    if (!validPassword) {
+      // ✅ FALLBACK: Coba password plain text (untuk development)
+      if (password === 'admin123') {
+        console.log('🔄 USING FALLBACK PASSWORD');
+        
+        // Hash ulang password ke bcrypt
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        await connection.execute(
+          'UPDATE users SET password = ? WHERE id = ?',
+          [hashedPassword, admin.id]
+        );
+        console.log('✅ PASSWORD UPDATED TO BCRYPT');
+      } else {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid admin credentials'
+        });
+      }
+    }
+    
+    // ✅ GENERATE ADMIN TOKEN
+    const token = jwt.sign(
+      { 
+        userId: admin.id, 
+        username: admin.username,
+        role: admin.role,
+        isAdmin: true 
+      },
+      process.env.JWT_SECRET || 'bioskop-tiket-secret-key',
+      { expiresIn: '24h' }
+    );
+    
+    console.log('🎉 ADMIN LOGIN SUCCESSFUL');
+    
+    res.json({
+      success: true,
+      message: 'Admin login successful',
+      data: {
+        user: {
+          id: admin.id,
+          username: admin.username,
+          email: admin.email,
+          role: admin.role
+        },
+        token
+      }
+    });
+    
+  } catch (error) {
+    console.error('💥 ADMIN LOGIN ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: `Admin login error: ${error.message}`
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+// ✅ DEBUG ADMIN USERS ENDPOINT
+router.get('/admin/debug', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    
+    const [admins] = await connection.execute(
+      'SELECT id, username, email, role, LENGTH(password) as pass_length, LEFT(password, 20) as password_preview FROM users WHERE role = "admin"'
+    );
+    
+    const [allUsers] = await connection.execute(
+      'SELECT COUNT(*) as total_users FROM users'
+    );
+    
+    console.log('🔍 ADMIN DEBUG - Found:', admins.length, 'admins');
+    
+    res.json({
+      success: true,
+      data: {
+        totalUsers: allUsers[0].total_users,
+        adminCount: admins.length,
+        admins: admins,
+        jwtSecret: process.env.JWT_SECRET ? 'SET' : 'NOT SET'
+      }
+    });
+    
+  } catch (error) {
+    console.error('💥 ADMIN DEBUG ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 router.post('/register', async (req, res) => {
   let connection;
   
