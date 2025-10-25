@@ -500,73 +500,85 @@ router.post('/scan-ticket', async (req, res) => {
 });
 
 // ✅ UPDATE UPLOAD PAYMENT - SIMPAN MIMETYPE JUGA
+// routes/bookings.js
+
+// ... (kode multer upload dan storage di bagian atas tetap menggunakan memoryStorage) ...
+
+// ✅ UPDATE UPLOAD PAYMENT (REGULER) - SIMPAN BASE64 KE DB
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
-  let connection;
-  try {
-    console.log('📁 Payment proof upload received');
-    
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No file uploaded' 
-      });
+    let connection;
+    try {
+        console.log('📁 Payment proof upload received (Memory Storage)');
+        
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'No file uploaded' 
+            });
+        }
+        
+        if (!req.body.booking_reference) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Booking reference is required' 
+            });
+        }
+        
+        // --- LOGIC PENYIMPANAN BASE64 (SOLUSI VERCEL TANPA S3) ---
+        const fileBuffer = req.file.buffer;
+        // Konversi Buffer file menjadi string Base64
+        const base64Data = fileBuffer.toString('base64'); 
+        
+        // Ambil metadata
+        const fileNameToSave = req.file.originalname; 
+        const mimeTypeToSave = req.file.mimetype; 
+        // --- END LOGIC ---
+
+        console.log('📸 File converted to Base64. Size:', base64Data.length);
+        
+        connection = await pool.promise().getConnection();
+        
+        // ✅ UPDATE BOOKINGS TABLE:
+        // Anda harus memastikan tabel 'bookings' memiliki kolom: 
+        // 1. payment_base64 (Tipe TEXT atau LONGTEXT)
+        // 2. payment_mimetype (Tipe VARCHAR)
+        // 3. payment_filename (Tipe VARCHAR)
+        const [result] = await connection.execute(
+            `UPDATE bookings SET 
+                payment_proof = ?, payment_filename = ?, payment_mimetype = ?, 
+                payment_base64 = ?, status = 'pending', payment_date = CURRENT_TIMESTAMP
+             WHERE booking_reference = ?`,
+            [
+                fileNameToSave, 
+                fileNameToSave, // Nama file untuk tampilan
+                mimeTypeToSave, 
+                base64Data, // Data Base64
+                req.body.booking_reference
+            ]
+        );
+        
+        if (result.affectedRows === 0) {
+             // ... (handle booking not found) ...
+        }
+        
+        console.log('✅ Payment proof saved as Base64 for booking:', req.body.booking_reference);
+        
+        res.json({
+            success: true,
+            message: 'Payment proof uploaded successfully (Saved to DB as Base64)',
+            fileName: fileNameToSave,
+            base64Size: base64Data.length
+        });
+        
+    } catch (error) {
+        console.error('❌ Upload error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Upload failed: ' + error.message 
+        });
+    } finally {
+        if (connection) connection.release();
     }
-    
-    if (!req.body.booking_reference) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Booking reference is required' 
-      });
-    }
-    
-    // ✅ CONVERT FILE TO BASE64
-    const fileBuffer = req.file.buffer;
-    const base64Image = fileBuffer.toString('base64');
-    const fileName = `payment-${Date.now()}-${req.file.originalname}`;
-    
-    console.log('📸 File converted to base64:', {
-      filename: fileName,
-      originalname: req.file.originalname,
-      size: req.file.size,
-      mimetype: req.file.mimetype,
-      base64Length: base64Image.length
-    });
-    
-    connection = await pool.promise().getConnection();
-    
-    // ✅ SIMPAN BASE64 + MIMETYPE DI DATABASE
-    const [result] = await connection.execute(
-      'UPDATE bookings SET payment_proof = ?, payment_filename = ?, payment_base64 = ?, mimetype = ? WHERE booking_reference = ?',
-      [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Booking not found'
-      });
-    }
-    
-    console.log('✅ Payment proof saved as base64 for booking:', req.body.booking_reference);
-    
-    res.json({
-      success: true,
-      message: 'Payment proof uploaded successfully',
-      fileName: fileName,
-      originalName: req.file.originalname,
-      base64Size: base64Image.length,
-      bookingReference: req.body.booking_reference
-    });
-    
-  } catch (error) {
-    console.error('❌ Upload error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  } finally {
-    if (connection) connection.release();
-  }
 });
 
 // ✅ GET PAYMENT IMAGE - PAKAI BASE64 (SUDAH BENAR)
@@ -843,6 +855,43 @@ router.get('/my-bookings', async (req, res) => {
   }
 });
 
+// routes/bookings.js
+
+// ... (setelah router.post('/'))
+
+// ✅ INI ADALAH ENDPOINT YANG HILANG DARI SNIPPET ANDA
+router.get('/my-bookings', async (req, res) => {
+    let connection;
+    try {
+        const username = req.query.username;
+        
+        if (!username) {
+            return res.status(400).json({ success: false, message: 'Username is required' });
+        }
+        
+        connection = await pool.promise().getConnection();
+        
+        // Query yang hanya mengambil REGULAR bookings untuk user ini
+        const [bookings] = await connection.execute(
+            `SELECT * FROM bookings 
+             WHERE (LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?))
+             AND booking_reference NOT LIKE 'BUNDLE-%' 
+             ORDER BY booking_date DESC`, 
+            [username, username]
+        );
+
+        res.json({
+            success: true,
+            data: bookings.map(b => ({...b, order_type: 'regular', showtime: 'N/A'})) // Tambahkan mapping yang dibutuhkan frontend
+        });
+        
+    } catch (error) {
+        console.error('❌ Error fetching regular bookings:', error);
+        res.status(500).json({ success: false, message: 'Server error fetching regular bookings: ' + error.message });
+    } finally {
+        if (connection) connection.release();
+    }
+});
 // ✅ GET UPLOADED PAYMENT PROOFS - HAPUS REFERENSI FILE SYSTEM
 router.get('/uploaded-payments', async (req, res) => {
   let connection;
@@ -969,63 +1018,68 @@ router.post('/create-bundle-order', async (req, res) => {
 
 
 
-// ✅ BUNDLE ORDER - UPLOAD PAYMENT PROOF (FIXED)
+// routes/bookings.js
+
+// ✅ BUNDLE ORDER - UPLOAD PAYMENT PROOF (BASE64 IMPLEMENTATION)
 router.post('/bundle-order/upload-payment', upload.single('payment_proof'), async (req, res) => {
-  let connection; // ✅ DEKLARASIKAN CONNECTION
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: 'No file uploaded'
-      });
+    let connection;
+    try {
+        console.log('📁 Bundle payment proof upload received (Base64)');
+        
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No file uploaded' });
+        }
+        
+        if (!req.body.order_reference) {
+            return res.status(400).json({ success: false, message: 'Order reference is required' });
+        }
+        
+        // --- LOGIC PENYIMPANAN BASE64 ---
+        const fileBuffer = req.file.buffer;
+        const base64Data = fileBuffer.toString('base64'); 
+        const fileNameToSave = req.file.originalname; 
+        const mimeTypeToSave = req.file.mimetype;
+        // --- END LOGIC ---
+
+        connection = await pool.promise().getConnection();
+        
+        // ✅ UPDATE BOOKINGS TABLE (Kolom sama dengan regular booking)
+        const [updateResult] = await connection.execute(
+            `UPDATE bookings SET 
+                payment_proof = ?, payment_filename = ?, payment_mimetype = ?,
+                payment_base64 = ?, payment_status = 'pending', payment_date = CURRENT_TIMESTAMP
+             WHERE booking_reference = ? AND order_type = 'bundle'`,
+            [
+                fileNameToSave, // Gunakan original name sebagai proof name
+                fileNameToSave, 
+                mimeTypeToSave,
+                base64Data, // Data Base64
+                req.body.order_reference
+            ]
+        );
+
+        if (updateResult.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: 'Bundle order not found or already processed' });
+        }
+        
+        console.log('✅ Bundle payment proof saved as Base64 for order:', req.body.order_reference);
+
+        res.json({
+            success: true,
+            message: 'Bundle payment proof uploaded successfully',
+            fileName: fileNameToSave,
+            base64Size: base64Data.length
+        });
+
+    } catch (error) {
+        console.error('❌ Bundle payment upload error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to upload payment proof: ' + error.message 
+        });
+    } finally {
+        if (connection) connection.release();
     }
-
-    const { order_reference } = req.body;
-    
-    if (!order_reference) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order reference is required'
-      });
-    }
-
-    console.log('📤 Uploading payment proof for bundle order:', order_reference);
-    console.log('📁 File:', req.file.filename);
-
-    // ✅ DAPATKAN KONEKSI DARI POOL
-    connection = await pool.promise().getConnection();
-
-    // Update bundle order dengan payment proof
-    const [updateResult] = await connection.execute(
-      'UPDATE bundle_orders SET payment_proof = ?, status = "confirmed" WHERE order_reference = ?',
-      [req.file.filename, order_reference]
-    );
-
-    if (updateResult.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bundle order not found'
-      });
-    }
-
-    console.log('✅ Bundle order updated with payment proof');
-
-    res.json({
-      success: true,
-      message: 'Payment proof uploaded successfully',
-      fileName: req.file.filename,
-      filePath: `/uploads/payments/${req.file.filename}`
-    });
-
-  } catch (error) {
-    console.error('❌ Error uploading payment proof:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to upload payment proof: ' + error.message
-    });
-  } finally {
-    if (connection) connection.release(); // ✅ RELEASE CONNECTION
-  }
 });
 
 // ✅ BUNDLE ORDER - CREATE NEW BUNDLE ORDER (CLEAN VERSION)
