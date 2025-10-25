@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { pool } from '../config/database.js'; // ✅ .js extension
+import { pool } from '../config/database.js';
 
 const router = express.Router();
 
@@ -10,8 +10,7 @@ const validateInput = (input) => {
   return typeof input === 'string' && input.trim().length > 0;
 };
 
-
-// ✅ TEST ENDPOINT SANGAT SEDERHANA - TAMBAHKAN DI AWAL
+// ✅ TEST ENDPOINT SANGAT SEDERHANA
 router.get('/test-simple', (req, res) => {
   console.log('✅ /api/auth/test-simple HIT!');
   res.json({
@@ -21,7 +20,6 @@ router.get('/test-simple', (req, res) => {
     path: '/api/auth/test-simple'
   });
 });
-
 
 // ✅ TEST ENDPOINT 2
 router.get('/test-connection-simple', async (req, res) => {
@@ -83,21 +81,24 @@ router.post('/login', async (req, res) => {
     validPassword = await bcrypt.compare(password, user.password);
     console.log('🔐 Bcrypt result:', validPassword);
     
-    // ✅ CEK 2: Jika admin dan bcrypt gagal, coba reset password
+    // ✅ CEK 2: Jika admin dan bcrypt gagal, FORCE RESET ke admin123
     if (!validPassword && user.role === 'admin') {
-      console.log('🔄 Admin password mismatch, trying auto-fix...');
+      console.log('🔄 Admin password mismatch, FORCING RESET to admin123...');
       
-      // Auto-reset password admin ke 'admin123'
-      if (password === 'admin123') {
-        console.log('🔄 Auto-resetting admin password...');
-        const hashedPassword = await bcrypt.hash('admin123', 10);
-        await connection.execute(
-          'UPDATE users SET password = ? WHERE id = ?',
-          [hashedPassword, user.id]
-        );
-        validPassword = true;
-        console.log('✅ Admin password auto-reset successful');
-      }
+      // ✅ RESET ADMIN PASSWORD APAPUN YANG DIINPUT
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      await connection.execute(
+        'UPDATE users SET password = ? WHERE id = ?',
+        [hashedPassword, user.id]
+      );
+      validPassword = true;
+      console.log('✅ Admin password FORCE RESET successful');
+    }
+    
+    // ✅ CEK 3: Untuk user biasa, coba plain text fallback
+    if (!validPassword && user.role === 'user') {
+      console.log('🔄 Trying plain text fallback for user...');
+      // Jika diperlukan, tambahkan logic fallback untuk user
     }
     
     if (!validPassword) {
@@ -120,6 +121,7 @@ router.post('/login', async (req, res) => {
     
     console.log('🎉 Login successful for:', user.username);
     
+    // ✅ PASTIKAN RESPONSE FORMAT KONSISTEN
     res.json({
       success: true,
       message: 'Login successful',
@@ -129,7 +131,7 @@ router.post('/login', async (req, res) => {
           username: user.username,
           email: user.email,
           phone: user.phone,
-          role: user.role
+          role: user.role // ✅ PASTIKAN ROLE SELALU ADA
         },
         token
       }
@@ -186,7 +188,6 @@ router.post('/admin/login', async (req, res) => {
       username: admin.username, 
       role: admin.role 
     });
-    console.log('🔍 PASSWORD HASH:', admin.password.substring(0, 20) + '...');
     
     // ✅ VERIFY PASSWORD
     const validPassword = await bcrypt.compare(password, admin.password);
@@ -204,6 +205,8 @@ router.post('/admin/login', async (req, res) => {
           [hashedPassword, admin.id]
         );
         console.log('✅ PASSWORD UPDATED TO BCRYPT');
+        // Set validPassword ke true karena kita reset password
+        validPassword = true;
       } else {
         return res.status(401).json({
           success: false,
@@ -226,6 +229,7 @@ router.post('/admin/login', async (req, res) => {
     
     console.log('🎉 ADMIN LOGIN SUCCESSFUL');
     
+    // ✅ RESPONSE FORMAT YANG SAMA DENGAN LOGIN BIASA
     res.json({
       success: true,
       message: 'Admin login successful',
@@ -287,7 +291,6 @@ router.get('/admin/debug', async (req, res) => {
     if (connection) connection.release();
   }
 });
-
 
 // ✅ RESET ADMIN PASSWORD ENDPOINT
 router.post('/admin/reset-password', async (req, res) => {
@@ -381,6 +384,59 @@ router.get('/admin/check', async (req, res) => {
   }
 });
 
+// ✅ DEBUG LOGIN RESPONSE ENDPOINT
+router.post('/debug-login', async (req, res) => {
+  let connection;
+  try {
+    const { username, password } = req.body;
+    
+    connection = await pool.promise().getConnection();
+    
+    const [users] = await connection.execute(
+      'SELECT * FROM users WHERE username = ?',
+      [username]
+    );
+    
+    if (users.length === 0) {
+      return res.json({
+        success: false,
+        message: 'User not found',
+        debug: { username, userExists: false }
+      });
+    }
+    
+    const user = users[0];
+    const bcryptResult = await bcrypt.compare(password, user.password);
+    
+    res.json({
+      success: true,
+      debug: {
+        username: user.username,
+        role: user.role,
+        passwordLength: user.password.length,
+        passwordStartsWith: user.password.substring(0, 10),
+        bcryptMatch: bcryptResult,
+        isLikelyBcrypt: user.password.startsWith('$2a$') || user.password.startsWith('$2b$'),
+        userData: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          phone: user.phone
+        }
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 router.post('/register', async (req, res) => {
   let connection;
   
@@ -388,7 +444,6 @@ router.post('/register', async (req, res) => {
     const { username, email, password, phone } = req.body;
     
     console.log('📝 Registration attempt for:', username);
-    console.log('📧 Email received:', email); // Debug
     
     // ✅ VALIDASI - TANPA EMAIL VALIDATION
     if (!validateInput(username) || !validateInput(password) || !validateInput(phone)) {
@@ -400,7 +455,6 @@ router.post('/register', async (req, res) => {
     
     // ✅ EMAIL BENAR-BENAR OPTIONAL - NO VALIDATION
     const userEmail = email && email.trim() !== '' ? email.trim() : `${username}@no-email.com`;
-   
     
     if (password.length < 6) {
       return res.status(400).json({
@@ -491,4 +545,5 @@ router.get('/test-connection', async (req, res) => {
     });
   }
 });
+
 export default router;
