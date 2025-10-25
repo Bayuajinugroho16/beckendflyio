@@ -16,7 +16,7 @@ async function initializeDatabase() {
 
     // Create database if not exists
     await new Promise((resolve, reject) => {
-      connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME || 'cinema_booking'}`, (err) => {
+      connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME || 'railway'}`, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -30,7 +30,7 @@ async function initializeDatabase() {
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'cinema_booking',
+      database: process.env.DB_NAME || 'railway',
       multipleStatements: true
     });
 
