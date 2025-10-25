@@ -41,8 +41,8 @@ router.post('/login', async (req, res) => {
     
     // ✅ Find user
     const [users] = await connection.execute(
-      'SELECT id, username, email, password, role, phone FROM users WHERE username = ?',
-      [username.trim()]
+      'SELECT id, username, email, password, role, phone FROM users WHERE username = ? OR email = ?',
+      [username.trim(), username.trim()]
     );
     
     console.log(`🔍 DEBUG: Users found: ${users.length}`);

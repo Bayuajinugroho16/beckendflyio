@@ -499,7 +499,7 @@ router.post('/scan-ticket', async (req, res) => {
   }
 });
 
-// ✅ UPLOAD PAYMENT PROOF - BASE64 SOLUTION (FIXED FOR VERCELL)
+// ✅ UPDATE UPLOAD PAYMENT - SIMPAN MIMETYPE JUGA
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
   let connection;
   try {
@@ -519,7 +519,7 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
       });
     }
     
-    // ✅ CONVERT FILE TO BASE64 (SOLUSI UNTUK VERCELL)
+    // ✅ CONVERT FILE TO BASE64
     const fileBuffer = req.file.buffer;
     const base64Image = fileBuffer.toString('base64');
     const fileName = `payment-${Date.now()}-${req.file.originalname}`;
@@ -534,10 +534,10 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
     
     connection = await pool.promise().getConnection();
     
-    // ✅ SIMPAN BASE64 + FILENAME DI DATABASE
+    // ✅ SIMPAN BASE64 + MIMETYPE DI DATABASE
     const [result] = await connection.execute(
-      'UPDATE bookings SET payment_proof = ?, payment_filename = ?, payment_base64 = ? WHERE booking_reference = ?',
-      [fileName, req.file.originalname, base64Image, req.body.booking_reference]
+      'UPDATE bookings SET payment_proof = ?, payment_filename = ?, payment_base64 = ?, mimetype = ? WHERE booking_reference = ?',
+      [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
     );
     
     if (result.affectedRows === 0) {
@@ -569,8 +569,7 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
   }
 });
 
-
-// ✅ GET PAYMENT IMAGE FOR ADMIN
+// ✅ GET PAYMENT IMAGE - PAKAI BASE64 (SUDAH BENAR)
 router.get('/payment-image/:bookingReference', async (req, res) => {
   let connection;
   try {
@@ -579,7 +578,7 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
     connection = await pool.promise().getConnection();
     
     const [bookings] = await connection.execute(
-      'SELECT payment_base64, payment_filename FROM bookings WHERE booking_reference = ?',
+      'SELECT payment_base64, payment_filename, mimetype FROM bookings WHERE booking_reference = ?',
       [bookingReference]
     );
     
@@ -592,11 +591,14 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
     
     const booking = bookings[0];
     
-    // ✅ KONVERSI BASE64 KEMBALI KE IMAGE
+    // ✅ PAKAI BASE64 DARI DATABASE - JANGAN FILE SYSTEM
     const imgBuffer = Buffer.from(booking.payment_base64, 'base64');
     
+    // ✅ GUNAKAN MIMETYPE YANG TEPAT
+    const mimeType = booking.mimetype || 'image/jpeg';
+    
     res.set({
-      'Content-Type': 'image/jpeg',
+      'Content-Type': mimeType,
       'Content-Length': imgBuffer.length,
       'Content-Disposition': `inline; filename="${booking.payment_filename}"`
     });
@@ -841,7 +843,7 @@ router.get('/my-bookings', async (req, res) => {
   }
 });
 
-// ✅ GET UPLOADED PAYMENT PROOFS
+// ✅ GET UPLOADED PAYMENT PROOFS - HAPUS REFERENSI FILE SYSTEM
 router.get('/uploaded-payments', async (req, res) => {
   let connection;
   try {
@@ -853,20 +855,33 @@ router.get('/uploaded-payments', async (req, res) => {
         customer_name,
         movie_title,
         total_amount,
-        payment_proof,
+        payment_filename,
+        payment_base64,
         status,
         booking_date
       FROM bookings 
-      WHERE payment_proof IS NOT NULL 
+      WHERE payment_base64 IS NOT NULL 
       ORDER BY booking_date DESC
     `);
     
     console.log('💰 Uploaded payments found:', payments.length);
     
+    // ✅ HAPUS INFO FILE PATH, GUNAKAN BASE64 SAJA
+    const paymentList = payments.map(payment => ({
+      booking_reference: payment.booking_reference,
+      customer_name: payment.customer_name,
+      movie_title: payment.movie_title,
+      total_amount: payment.total_amount,
+      payment_filename: payment.payment_filename,
+      has_image: !!payment.payment_base64,
+      status: payment.status,
+      booking_date: payment.booking_date
+    }));
+    
     res.json({
       success: true,
-      count: payments.length,
-      data: payments
+      count: paymentList.length,
+      data: paymentList
     });
     
   } catch (error) {
@@ -879,7 +894,6 @@ router.get('/uploaded-payments', async (req, res) => {
     if (connection) connection.release();
   }
 });
-
 // Di backend - routes/bookings.js
 router.post('/create-bundle-order', async (req, res) => {
   let connection; // ✅ DEKLARASIKAN CONNECTION
