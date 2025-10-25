@@ -41,111 +41,97 @@ router.get('/test-connection-simple', async (req, res) => {
   }
 });
 
-// ✅ PERBAIKI LOGIN UNTUK AUTO-FIX PASSWORD
+// ✅ PERBAIKAN LOGIN UTAMA (HILANGKAN FORCE RESET OTOMATIS)
 router.post('/login', async (req, res) => {
-  let connection;
-  
-  try {
-    console.log('🔐 Login attempt for:', req.body.username);
+    let connection;
     
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username and password are required'
-      });
+    try {
+        console.log('🔐 Login attempt for:', req.body.username);
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Username and password are required'
+            });
+        }
+        
+        connection = await pool.promise().getConnection();
+        
+        // Cari user (sudah benar: username ATAU email)
+        const [users] = await connection.execute(
+            'SELECT id, username, email, password, role, phone FROM users WHERE username = ? OR email = ?',
+            [username.trim(), username.trim()]
+        );
+        
+        if (users.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid username or password'
+            });
+        }
+        
+        const user = users[0];
+        console.log('✅ User found:', user.username, 'Role:', user.role);
+        
+        let validPassword = false;
+        
+        // ✅ CEK PASSWORD DENGAN BCRYPT (STANDAR)
+        if (user.password) {
+             validPassword = await bcrypt.compare(password, user.password);
+        } else {
+             // Fallback jika password di DB null/kosong (seharusnya tidak terjadi)
+             console.log('⚠️ Password in DB is missing or empty.');
+        }
+
+        console.log('🔐 Final Bcrypt match result:', validPassword);
+        
+        // HAPUS SEMUA LOGIC 'FORCE RESET' DI SINI
+        
+        if (!validPassword) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid username or password'
+            });
+        }
+        
+        // Generate token
+        const token = jwt.sign(
+            { 
+                userId: user.id, 
+                username: user.username,
+                role: user.role 
+            },
+            process.env.JWT_SECRET || 'bioskop-tiket-secret-key',
+            { expiresIn: '7d' }
+        );
+        
+        console.log('🎉 Login successful for:', user.username);
+        
+        res.json({
+            success: true,
+            message: 'Login successful',
+            data: {
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    phone: user.phone,
+                    role: user.role 
+                },
+                token
+            }
+        });
+        
+    } catch (error) {
+        console.error('💥 Login error:', error);
+        res.status(500).json({
+            success: false,
+            message: `Login error: ${error.message}`
+        });
+    } finally {
+        if (connection) connection.release();
     }
-    
-    connection = await pool.promise().getConnection();
-    
-    // Cari user
-    const [users] = await connection.execute(
-      'SELECT id, username, email, password, role, phone FROM users WHERE username = ? OR email = ?',
-      [username.trim(), username.trim()]
-    );
-    
-    if (users.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid username or password'
-      });
-    }
-    
-    const user = users[0];
-    console.log('✅ User found:', user.username, 'Role:', user.role);
-    
-    let validPassword = false;
-    
-    // ✅ CEK 1: Bcrypt comparison
-    validPassword = await bcrypt.compare(password, user.password);
-    console.log('🔐 Bcrypt result:', validPassword);
-    
-    // ✅ CEK 2: Jika admin dan bcrypt gagal, FORCE RESET ke admin123
-    if (!validPassword && user.role === 'admin') {
-      console.log('🔄 Admin password mismatch, FORCING RESET to admin123...');
-      
-      // ✅ RESET ADMIN PASSWORD APAPUN YANG DIINPUT
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await connection.execute(
-        'UPDATE users SET password = ? WHERE id = ?',
-        [hashedPassword, user.id]
-      );
-      validPassword = true;
-      console.log('✅ Admin password FORCE RESET successful');
-    }
-    
-    // ✅ CEK 3: Untuk user biasa, coba plain text fallback
-    if (!validPassword && user.role === 'user') {
-      console.log('🔄 Trying plain text fallback for user...');
-      // Jika diperlukan, tambahkan logic fallback untuk user
-    }
-    
-    if (!validPassword) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid username or password'
-      });
-    }
-    
-    // Generate token
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        username: user.username,
-        role: user.role 
-      },
-      process.env.JWT_SECRET || 'bioskop-tiket-secret-key',
-      { expiresIn: '7d' }
-    );
-    
-    console.log('🎉 Login successful for:', user.username);
-    
-    // ✅ PASTIKAN RESPONSE FORMAT KONSISTEN
-    res.json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          phone: user.phone,
-          role: user.role // ✅ PASTIKAN ROLE SELALU ADA
-        },
-        token
-      }
-    });
-    
-  } catch (error) {
-    console.error('💥 Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: `Login error: ${error.message}`
-    });
-  } finally {
-    if (connection) connection.release();
-  }
 });
 
 // ✅ ADMIN LOGIN ENDPOINT - TERPISAH DARI USER LOGIN
