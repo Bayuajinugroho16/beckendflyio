@@ -437,6 +437,46 @@ router.post('/debug-login', async (req, res) => {
   }
 });
 
+// Tambahkan endpoint buat admin baru di auth.js
+router.post('/admin/create-new', async (req, res) => {
+  let connection;
+  try {
+    const { username = 'superadmin', password = 'admin123' } = req.body;
+    
+    connection = await pool.promise().getConnection();
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Hapus admin lama jika ada
+    await connection.execute('DELETE FROM users WHERE username = ? AND role = "admin"', [username]);
+    
+    // Buat admin baru
+    const [result] = await connection.execute(
+      'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, "admin")',
+      [username, `${username}@cinema.com`, hashedPassword]
+    );
+    
+    res.json({
+      success: true,
+      message: 'New admin created successfully',
+      credentials: {
+        username: username,
+        password: password,
+        id: result.insertId
+      }
+    });
+    
+  } catch (error) {
+    console.error('Create admin error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 router.post('/register', async (req, res) => {
   let connection;
   
