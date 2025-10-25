@@ -572,4 +572,4 @@ router.get('/test-connection', async (req, res) => {
   }
 });
 
-export default router;
+module.exports = router;
