@@ -24,6 +24,66 @@ const upload = multer({
 
 
 
+// ✅ GET ALL BOOKINGS (UNTUK ADMIN)
+router.get('/', async (req, res) => {
+  let connection;
+  try {
+    console.log('📖 Fetching all bookings for admin');
+    
+    connection = await pool.promise().getConnection();
+    
+    const [bookings] = await connection.execute(`
+      SELECT 
+        id, booking_reference, customer_name, customer_email,
+        customer_phone, movie_title, showtime_id, seat_numbers,
+        total_amount, status, booking_date, is_verified,
+        payment_proof, payment_filename
+      FROM bookings 
+      ORDER BY booking_date DESC
+    `);
+    
+    console.log(`✅ Found ${bookings.length} bookings`);
+    
+    // Process seat_numbers dari JSON string ke array
+    const processedBookings = bookings.map(booking => {
+      let seatNumbers = [];
+      try {
+        if (booking.seat_numbers) {
+          if (typeof booking.seat_numbers === 'string') {
+            seatNumbers = JSON.parse(booking.seat_numbers);
+          } else if (Array.isArray(booking.seat_numbers)) {
+            seatNumbers = booking.seat_numbers;
+          }
+        }
+      } catch (error) {
+        console.log('Error parsing seat numbers:', error);
+        seatNumbers = [];
+      }
+      
+      return {
+        ...booking,
+        seat_numbers: seatNumbers,
+        has_payment: !!booking.payment_proof
+      };
+    });
+    
+    res.json({
+      success: true,
+      count: processedBookings.length,
+      data: processedBookings
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching bookings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching bookings: ' + error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 
 // ✅ OCCUPIED SEATS ENDPOINT
 router.get('/occupied-seats', async (req, res) => {
@@ -499,10 +559,7 @@ router.post('/scan-ticket', async (req, res) => {
   }
 });
 
-// ✅ UPDATE UPLOAD PAYMENT - SIMPAN MIMETYPE JUGA
-// routes/bookings.js
 
-// ... (kode multer upload dan storage di bagian atas tetap menggunakan memoryStorage) ...
 
 // ✅ UPDATE UPLOAD PAYMENT (REGULER) - SIMPAN BASE64 KE DB
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
@@ -628,13 +685,13 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
   }
 });
 
-// ✅ PERBAIKI: HANDLE BUFFER/OBJECT SEAT NUMBERS
+
+// ✅ GET USER BOOKINGS (MY-BOOKINGS)
 router.get('/my-bookings', async (req, res) => {
   let connection;
   try {
     const username = req.query.username;
-
-    console.log('👤 Fetching tickets for user:', username);
+    console.log('👤 Fetching bookings for user:', username);
     
     if (!username) {
       return res.status(400).json({
@@ -681,80 +738,24 @@ router.get('/my-bookings', async (req, res) => {
     
     const allOrders = [...regularBookings, ...bundleOrders];
     
-    // ✅ PERBAIKI: HANDLE BUFFER/OBJECT SEAT NUMBERS
+    // ✅ PROCESS SEAT NUMBERS
     const parsedBookings = allOrders.map(booking => {
-      console.log(`🔍 Processing booking ${booking.id}:`, {
-        rawSeatNumbers: booking.seat_numbers,
-        type: typeof booking.seat_numbers,
-        isArray: Array.isArray(booking.seat_numbers),
-        isBuffer: Buffer.isBuffer(booking.seat_numbers)
-      });
-      
       let seatNumbers = [];
       
       if (booking.order_type === 'regular') {
         try {
-          // ✅ HANDLE BERBAGAI FORMAT SEAT NUMBERS
           if (Array.isArray(booking.seat_numbers)) {
-            // Jika sudah array, langsung pakai
-            console.log(`   ✅ Already array:`, booking.seat_numbers);
-            seatNumbers = booking.seat_numbers.filter(seat => 
-              seat !== null && seat !== undefined && String(seat).trim() !== ''
-            );
-          }
-          else if (Buffer.isBuffer(booking.seat_numbers)) {
-            // Jika Buffer, convert ke string dulu
-            console.log(`   🔄 Converting buffer to string`);
-            const bufferString = booking.seat_numbers.toString();
-            console.log(`   Buffer string:`, bufferString);
-            
-            // Coba parse sebagai JSON
-            try {
-              const parsed = JSON.parse(bufferString);
-              if (Array.isArray(parsed)) {
-                seatNumbers = parsed;
-              }
-            } catch (jsonError) {
-              // Jika bukan JSON, split sebagai string
-              const extracted = bufferString.replace(/[\[\]"]/g, '')
-                .split(',')
-                .map(s => s.trim())
-                .filter(s => s !== '');
-              seatNumbers = extracted;
-            }
-          }
-          else if (typeof booking.seat_numbers === 'string') {
-            // Jika string, coba parse JSON
-            console.log(`   🔄 Processing string:`, booking.seat_numbers);
-            try {
-              const parsed = JSON.parse(booking.seat_numbers);
-              if (Array.isArray(parsed)) {
-                seatNumbers = parsed;
-              }
-            } catch (jsonError) {
-              // Jika bukan JSON, split sebagai string biasa
-              const extracted = booking.seat_numbers.replace(/[\[\]"]/g, '')
-                .split(',')
-                .map(s => s.trim())
-                .filter(s => s !== '');
-              seatNumbers = extracted;
-            }
-          }
-          else if (booking.seat_numbers) {
-            // Fallback: convert ke array
-            console.log(`   🔄 Fallback conversion`);
+            seatNumbers = booking.seat_numbers;
+          } else if (typeof booking.seat_numbers === 'string') {
+            const parsed = JSON.parse(booking.seat_numbers);
+            seatNumbers = Array.isArray(parsed) ? parsed : [parsed];
+          } else if (booking.seat_numbers) {
             seatNumbers = [String(booking.seat_numbers)];
           }
-          
-          console.log(`   ✅ Final seats for ${booking.id}:`, seatNumbers);
-          
         } catch (error) {
-          console.log(`❌ Error processing seats for ${booking.id}:`, error.message);
+          console.log(`Error processing seats:`, error);
           seatNumbers = [];
         }
-      } else {
-        // Bundle orders
-        seatNumbers = [];
       }
       
       // Map showtime
@@ -788,7 +789,7 @@ router.get('/my-bookings', async (req, res) => {
         booking_reference: booking.booking_reference,
         verification_code: booking.verification_code,
         movie_title: booking.movie_title,
-        seat_numbers: seatNumbers, // ✅ ARRAY YANG SUDAH DIPROSES
+        seat_numbers: seatNumbers,
         showtime_id: booking.showtime_id,
         showtime: showtimeText,
         total_amount: booking.total_amount,
@@ -813,21 +814,6 @@ router.get('/my-bookings', async (req, res) => {
           minute: '2-digit'
         })
       };
-    });
-    
-    // ✅ FINAL DEBUG
-    console.log('📊 FINAL PROCESSED DATA:');
-    const withSeats = parsedBookings.filter(b => b.seat_numbers && b.seat_numbers.length > 0);
-    const withoutSeats = parsedBookings.filter(b => !b.seat_numbers || b.seat_numbers.length === 0);
-    
-    console.log(`   With seats: ${withSeats.length}`);
-    console.log(`   Without seats: ${withoutSeats.length}`);
-    
-    withSeats.forEach(booking => {
-      console.log(`   ✅ ${booking.id} (${booking.order_type}):`, {
-        movie: booking.movie_title,
-        seats: booking.seat_numbers
-      });
     });
     
     res.json({

@@ -3,11 +3,14 @@ import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import bookingRoutes from './routes/bookings.js';
 import { pool } from './config/database.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use('/api/bookings', bookingRoutes);
+console.log('✅ Bookings routes registered');
 
 // ✅ SUPER SIMPLE AUTH ROUTES
 app.post('/api/auth/login', async (req, res) => {
