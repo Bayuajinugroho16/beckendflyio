@@ -5,14 +5,43 @@ import { pool } from '../config/database.js'; // ✅ .js extension
 
 const router = express.Router();
 
-const mysql = require('mysql2');
-
-
-
 // Input validation helper
 const validateInput = (input) => {
   return typeof input === 'string' && input.trim().length > 0;
 };
+
+
+// ✅ TEST ENDPOINT SANGAT SEDERHANA - TAMBAHKAN DI AWAL
+router.get('/test-simple', (req, res) => {
+  console.log('✅ /api/auth/test-simple HIT!');
+  res.json({
+    success: true,
+    message: 'AUTH ROUTES ARE WORKING!',
+    timestamp: new Date().toISOString(),
+    path: '/api/auth/test-simple'
+  });
+});
+
+
+// ✅ TEST ENDPOINT 2
+router.get('/test-connection-simple', async (req, res) => {
+  try {
+    const connection = await pool.promise().getConnection();
+    const [result] = await connection.execute('SELECT 1 as test, NOW() as time');
+    connection.release();
+    
+    res.json({
+      success: true,
+      message: 'Database connected from auth.js!',
+      data: result[0]
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // ✅ PERBAIKI LOGIN UNTUK AUTO-FIX PASSWORD
 router.post('/login', async (req, res) => {
