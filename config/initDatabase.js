@@ -133,6 +133,15 @@ async function initializeDatabase() {
 
     // Insert sample data
     await insertSampleData(connection);
+    const bcrypt = require('bcryptjs');
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+
+    await connection.query(
+        "INSERT IGNORE INTO users (username, email, password, phone, role) VALUES ('admin', 'admin@cinema.com', ?, '080012345678', 'admin')",
+        [hashedPassword]
+    );
+
+    console.log('✅ Sample admin user inserted (Username: admin, Pass: admin123)');
     
     console.log('✅ Database initialization completed successfully!');
 
