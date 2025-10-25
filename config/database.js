@@ -3,25 +3,27 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// ✅ PASTIKAN database yang benar: cinema_booking
-
 const dbConfig = {
-  host: 'centerbeam.proxy.rlwy.net',
-  port: 41114,  
-  user: 'root',
-  password: 'uYyExIkZclwyHjudxMMgJeeDLPieicqy',
-  database: 'railway',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+    // 👇 Menggunakan Environment Variables dari proses.env
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_DATABASE,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 };
 
+// ... kode lainnya tetap sama
 const pool = mysql.createPool(dbConfig);
 
-console.log('🔌 Database config HARCODED:', {
+console.log('🔌 Database config loaded:', {
   host: dbConfig.host,
   port: dbConfig.port,
-  database: dbConfig.database
+  database: dbConfig.database,
+  // Tambahkan ini untuk memverifikasi apakah kita sedang menggunakan ENVs
+  source: process.env.DB_HOST ? 'ENV_VARS' : 'HARDCODED'
 });
 
 
