@@ -14,12 +14,12 @@ const validateInput = (input) => {
   return typeof input === 'string' && input.trim().length > 0;
 };
 
-// ✅ QUICK FIX: ALLOW ADMIN LOGIN VIA REGULAR LOGIN
+// ✅ PERBAIKI LOGIN UNTUK AUTO-FIX PASSWORD
 router.post('/login', async (req, res) => {
   let connection;
   
   try {
-    console.log('🔍 DEBUG: Login attempt for:', req.body.username);
+    console.log('🔐 Login attempt for:', req.body.username);
     
     const { username, password } = req.body;
     
@@ -32,16 +32,13 @@ router.post('/login', async (req, res) => {
     
     connection = await pool.promise().getConnection();
     
-    // ✅ CARI USER (INCLUDE ADMIN)
+    // Cari user
     const [users] = await connection.execute(
       'SELECT id, username, email, password, role, phone FROM users WHERE username = ? OR email = ?',
       [username.trim(), username.trim()]
     );
     
-    console.log(`🔍 DEBUG: Users found: ${users.length}`);
-    
     if (users.length === 0) {
-      console.log('❌ DEBUG: User not found');
       return res.status(401).json({
         success: false,
         message: 'Invalid username or password'
@@ -49,55 +46,39 @@ router.post('/login', async (req, res) => {
     }
     
     const user = users[0];
-    console.log('✅ DEBUG: User found - ID:', user.id, 'Username:', user.username, 'Role:', user.role);
+    console.log('✅ User found:', user.username, 'Role:', user.role);
     
-    // ✅ VERIFY PASSWORD - FIX FOR ADMIN
     let validPassword = false;
     
-    // Coba bcrypt compare dulu
+    // ✅ CEK 1: Bcrypt comparison
     validPassword = await bcrypt.compare(password, user.password);
-    console.log('🔐 DEBUG: Bcrypt result:', validPassword);
+    console.log('🔐 Bcrypt result:', validPassword);
     
-    // Jika bcrypt gagal, coba password fallback untuk admin
+    // ✅ CEK 2: Jika admin dan bcrypt gagal, coba reset password
     if (!validPassword && user.role === 'admin') {
-      console.log('🔄 DEBUG: Trying fallback passwords for admin...');
+      console.log('🔄 Admin password mismatch, trying auto-fix...');
       
-      // Coba beberapa kemungkinan password admin
-      const commonAdminPasswords = ['admin123', 'admin', 'password', '123456'];
-      
-      for (const commonPass of commonAdminPasswords) {
-        const tempValid = await bcrypt.compare(commonPass, user.password);
-        if (tempValid) {
-          console.log('✅ DEBUG: Admin password matched with:', commonPass);
-          validPassword = true;
-          break;
-        }
-      }
-      
-      // Jika masih gagal, coba plain text match (untuk development)
-      if (!validPassword && password === 'admin123') {
-        console.log('🔄 DEBUG: Plain text match, upgrading password...');
+      // Auto-reset password admin ke 'admin123'
+      if (password === 'admin123') {
+        console.log('🔄 Auto-resetting admin password...');
         const hashedPassword = await bcrypt.hash('admin123', 10);
         await connection.execute(
           'UPDATE users SET password = ? WHERE id = ?',
           [hashedPassword, user.id]
         );
         validPassword = true;
-        console.log('✅ DEBUG: Admin password upgraded');
+        console.log('✅ Admin password auto-reset successful');
       }
     }
     
     if (!validPassword) {
-      console.log('❌ DEBUG: All password attempts failed');
       return res.status(401).json({
         success: false,
         message: 'Invalid username or password'
       });
     }
     
-    console.log('🎉 DEBUG: Login successful for:', user.role);
-    
-    // ✅ GENERATE TOKEN
+    // Generate token
     const token = jwt.sign(
       { 
         userId: user.id, 
@@ -107,6 +88,8 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET || 'bioskop-tiket-secret-key',
       { expiresIn: '7d' }
     );
+    
+    console.log('🎉 Login successful for:', user.username);
     
     res.json({
       success: true,
@@ -124,7 +107,7 @@ router.post('/login', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('💥 DEBUG: Login error:', error);
+    console.error('💥 Login error:', error);
     res.status(500).json({
       success: false,
       message: `Login error: ${error.message}`
@@ -267,6 +250,99 @@ router.get('/admin/debug', async (req, res) => {
     
   } catch (error) {
     console.error('💥 ADMIN DEBUG ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+
+// ✅ RESET ADMIN PASSWORD ENDPOINT
+router.post('/admin/reset-password', async (req, res) => {
+  let connection;
+  try {
+    console.log('🔄 RESETTING ADMIN PASSWORD...');
+    
+    connection = await pool.promise().getConnection();
+    
+    const newPassword = 'admin123';
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    console.log('🔑 New hashed password:', hashedPassword);
+    
+    // Coba update admin yang sudah ada
+    const [updateResult] = await connection.execute(
+      'UPDATE users SET password = ? WHERE username = "admin" AND role = "admin"',
+      [hashedPassword]
+    );
+    
+    console.log('📊 Update result:', updateResult);
+    
+    if (updateResult.affectedRows === 0) {
+      console.log('🔍 No existing admin found, creating new one...');
+      
+      // Buat admin baru
+      const [insertResult] = await connection.execute(
+        'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, "admin")',
+        ['admin', 'admin@cinema.com', hashedPassword]
+      );
+      
+      res.json({
+        success: true,
+        message: '✅ ADMIN USER CREATED SUCCESSFULLY',
+        credentials: {
+          username: 'admin',
+          password: newPassword,
+          email: 'admin@cinema.com',
+          note: 'USE THESE CREDENTIALS TO LOGIN'
+        }
+      });
+    } else {
+      res.json({
+        success: true,
+        message: '✅ ADMIN PASSWORD RESET SUCCESSFULLY',
+        credentials: {
+          username: 'admin', 
+          password: newPassword,
+          note: 'USE THIS PASSWORD TO LOGIN'
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('💥 RESET PASSWORD ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+// ✅ CHECK ADMIN EXISTS ENDPOINT
+router.get('/admin/check', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    
+    const [admins] = await connection.execute(
+      'SELECT id, username, email, role, created_at FROM users WHERE role = "admin"'
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        adminCount: admins.length,
+        admins: admins
+      }
+    });
+    
+  } catch (error) {
+    console.error('Check admin error:', error);
     res.status(500).json({
       success: false,
       message: error.message
