@@ -82,6 +82,264 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+
+// ✅ OCCUPIED SEATS ENDPOINT - YANG DIPERLUKAN FRONTEND
+app.get('/bookings/occupied-seats', async (req, res) => {
+  let connection;
+  try {
+    const { showtime_id, movie_title } = req.query;
+    
+    console.log('🎯 Fetching occupied seats for:', { showtime_id, movie_title });
+    
+    if (!showtime_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Showtime ID is required'
+      });
+    }
+
+    connection = await pool.promise().getConnection();
+    
+    // Query untuk mendapatkan kursi yang sudah dipesan
+    const [bookings] = await connection.execute(
+      `SELECT seat_numbers FROM bookings 
+       WHERE showtime_id = ? AND status = 'confirmed'`,
+      [showtime_id]
+    );
+    
+    connection.release();
+
+    console.log(`✅ Found ${bookings.length} bookings for showtime ${showtime_id}`);
+
+    // Process seat numbers
+    const occupiedSeats = new Set();
+    
+    bookings.forEach(booking => {
+      try {
+        let seats;
+        if (typeof booking.seat_numbers === 'string') {
+          try {
+            seats = JSON.parse(booking.seat_numbers);
+          } catch (e) {
+            // Fallback: treat as comma-separated string
+            seats = booking.seat_numbers.split(',').map(seat => seat.trim());
+          }
+        } else {
+          seats = booking.seat_numbers;
+        }
+        
+        if (Array.isArray(seats)) {
+          seats.forEach(seat => {
+            if (seat && seat.trim() !== '') {
+              occupiedSeats.add(seat.trim());
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error processing seat numbers:', error);
+      }
+    });
+
+    const occupiedSeatsArray = Array.from(occupiedSeats);
+    console.log(`🎯 Occupied seats:`, occupiedSeatsArray);
+
+    res.json({
+      success: true,
+      data: occupiedSeatsArray
+    });
+
+  } catch (error) {
+    console.error('❌ Error in occupied-seats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error: ' + error.message,
+      data: []
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+// ✅ CREATE BOOKING ENDPOINT - YANG DIPERLUKAN FRONTEND
+app.post('/bookings', async (req, res) => {
+  let connection;
+  try {
+    const {
+      showtime_id,
+      customer_name,
+      customer_email,
+      customer_phone,
+      seat_numbers,
+      total_amount,
+      movie_title
+    } = req.body;
+
+    console.log('📥 Creating booking:', {
+      showtime_id,
+      customer_name,
+      seat_numbers,
+      total_amount
+    });
+
+    // Validasi
+    if (!showtime_id || !customer_name || !customer_email || !seat_numbers || !total_amount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
+      });
+    }
+
+    connection = await pool.promise().getConnection();
+
+    // Generate booking reference
+    const booking_reference = 'BK' + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();
+    const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Insert booking
+    const query = `
+      INSERT INTO bookings 
+      (showtime_id, customer_name, customer_email, customer_phone, 
+       seat_numbers, total_amount, movie_title, booking_reference, 
+       verification_code, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `;
+
+    const [result] = await connection.execute(query, [
+      showtime_id,
+      customer_name,
+      customer_email,
+      customer_phone || null,
+      JSON.stringify(seat_numbers),
+      total_amount,
+      movie_title || null,
+      booking_reference,
+      verification_code
+    ]);
+
+    const bookingId = result.insertId;
+
+    // Get the created booking
+    const [newBookings] = await connection.execute(
+      'SELECT * FROM bookings WHERE id = ?',
+      [bookingId]
+    );
+
+    const newBooking = newBookings[0];
+
+    // Parse seat numbers for response
+    let parsedSeatNumbers;
+    try {
+      parsedSeatNumbers = JSON.parse(newBooking.seat_numbers);
+    } catch (error) {
+      parsedSeatNumbers = [newBooking.seat_numbers];
+    }
+
+    console.log('✅ Booking created:', booking_reference);
+
+    res.status(201).json({
+      success: true,
+      message: 'Booking created successfully',
+      data: {
+        id: newBooking.id,
+        booking_reference: newBooking.booking_reference,
+        verification_code: newBooking.verification_code,
+        customer_name: newBooking.customer_name,
+        customer_email: newBooking.customer_email,
+        customer_phone: newBooking.customer_phone,
+        total_amount: newBooking.total_amount,
+        seat_numbers: parsedSeatNumbers,
+        status: newBooking.status,
+        booking_date: newBooking.booking_date,
+        movie_title: newBooking.movie_title,
+        showtime_id: newBooking.showtime_id
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Booking creation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create booking: ' + error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+
+// ✅ CONFIRM PAYMENT ENDPOINT - YANG DIPERLUKAN FRONTEND
+app.post('/bookings/confirm-payment', async (req, res) => {
+  let connection;
+  try {
+    const { booking_reference } = req.body;
+    
+    console.log('💰 Confirming payment for:', booking_reference);
+
+    if (!booking_reference) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking reference is required'
+      });
+    }
+
+    connection = await pool.promise().getConnection();
+    
+    // Update status to confirmed
+    const [result] = await connection.execute(
+      'UPDATE bookings SET status = "confirmed" WHERE booking_reference = ?',
+      [booking_reference]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+    
+    // Get updated booking
+    const [bookings] = await connection.execute(
+      'SELECT * FROM bookings WHERE booking_reference = ?',
+      [booking_reference]
+    );
+    
+    const updatedBooking = bookings[0];
+    
+    // Parse seat numbers
+    let seatNumbers;
+    try {
+      seatNumbers = JSON.parse(updatedBooking.seat_numbers);
+    } catch (error) {
+      seatNumbers = typeof updatedBooking.seat_numbers === 'string' 
+        ? updatedBooking.seat_numbers.split(',').map(s => s.trim())
+        : [updatedBooking.seat_numbers];
+    }
+    
+    console.log('✅ Payment confirmed for:', booking_reference);
+    
+    // Response data
+    const responseData = {
+      ...updatedBooking,
+      seat_numbers: seatNumbers
+    };
+    
+    res.json({
+      success: true,
+      message: 'Payment confirmed successfully!',
+      data: responseData
+    });
+    
+  } catch (error) {
+    console.error('❌ Payment confirmation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Payment confirmation failed: ' + error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 // ==================== PAYMENT UPLOAD ENDPOINTS ====================
 
 // ✅ ENDPOINT UPDATE PAYMENT BASE64 - YANG UTAMA
