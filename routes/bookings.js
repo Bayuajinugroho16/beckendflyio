@@ -1035,28 +1035,42 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
   try {
     console.log('=== 🚀 UPLOAD PAYMENT - GENERATE REFERENCE & CODE ===');
     
-    if (!req.file || !req.body.booking_id) {
+    if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: 'File and booking ID required'
+        message: 'File required'
+      });
+    }
+
+    // ✅ TANGANI BOTH booking_id DAN booking_reference
+    const bookingId = req.body.booking_id;
+    const bookingReference = req.body.booking_reference;
+    
+    if (!bookingId && !bookingReference) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking ID or Booking Reference required'
       });
     }
 
     // ✅ GENERATE REFERENCE & CODE SAAT UPLOAD BUKTI BAYAR
-    const booking_reference = 'TIX' + Date.now().toString().slice(-6) + Math.random().toString(36).substr(2, 3).toUpperCase();
+    const new_booking_reference = bookingReference || 'TIX' + Date.now().toString().slice(-6) + Math.random().toString(36).substr(2, 3).toUpperCase();
     const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
 
     const base64Image = req.file.buffer.toString('base64');
     const fileName = `payment-${Date.now()}-${req.file.originalname}`;
     
-    console.log('📤 Uploading for booking ID:', req.body.booking_id);
-    console.log('🎫 Generated:', { booking_reference, verification_code });
+    console.log('📤 Uploading for:', { bookingId, bookingReference });
+    console.log('🎫 Generated:', { new_booking_reference, verification_code });
     
     connection = await pool.promise().getConnection();
 
-    // ✅ UPDATE DENGAN REFERENCE, CODE, DAN STATUS pending_verification
-    const [result] = await connection.execute(
-      `UPDATE bookings SET 
+    // ✅ BUILD QUERY DYNAMIC (UNTUK booking_id ATAU booking_reference)
+    let query;
+    let params;
+    
+    if (bookingId) {
+      query = `UPDATE bookings SET 
         booking_reference = ?,
         verification_code = ?,
         payment_proof = ?, 
@@ -1065,17 +1079,22 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
         payment_mimetype = ?,
         status = 'pending_verification',
         payment_date = NOW()
-      WHERE id = ? AND status = 'pending'`, // Hanya update jika masih pending
-      [
-        booking_reference,
-        verification_code,
-        fileName,
-        req.file.originalname,
-        base64Image,
-        req.file.mimetype,
-        req.body.booking_id
-      ]
-    );
+      WHERE id = ? AND status = 'pending'`;
+      params = [new_booking_reference, verification_code, fileName, req.file.originalname, base64Image, req.file.mimetype, bookingId];
+    } else {
+      query = `UPDATE bookings SET 
+        verification_code = ?,
+        payment_proof = ?, 
+        payment_filename = ?, 
+        payment_base64 = ?, 
+        payment_mimetype = ?,
+        status = 'pending_verification',
+        payment_date = NOW()
+      WHERE booking_reference = ? AND status = 'pending'`;
+      params = [verification_code, fileName, req.file.originalname, base64Image, req.file.mimetype, bookingReference];
+    }
+
+    const [result] = await connection.execute(query, params);
     
     if (result.affectedRows === 0) {
       return res.status(404).json({
@@ -1086,8 +1105,8 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
     
     // Get updated booking data
     const [bookings] = await connection.execute(
-      'SELECT * FROM bookings WHERE id = ?',
-      [req.body.booking_id]
+      'SELECT * FROM bookings WHERE booking_reference = ?',
+      [new_booking_reference]
     );
     
     const booking = bookings[0];
@@ -1104,12 +1123,13 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
     
     console.log('✅ Payment uploaded! Status: pending_verification');
     
+    // ✅ KIRIM VERIFICATION_CODE KE FRONTEND
     res.json({
       success: true,
       message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
       data: {
-        booking_reference: booking_reference,
-        verification_code: verification_code,
+        booking_reference: new_booking_reference,
+        verification_code: verification_code, // ✅ INI YANG PENTING!
         status: 'pending_verification',
         customer_name: booking.customer_name,
         movie_title: booking.movie_title,
@@ -1128,7 +1148,7 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
   } finally {
     if (connection) connection.release();
   }
-}); 
+});
 
 // ✅ ENDPOINT UNTUK BASE64 UPLOAD (COMPATIBILITY) - UPDATE STATUS
 router.post('/update-payment-base64', async (req, res) => {
