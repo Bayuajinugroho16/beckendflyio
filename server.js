@@ -1,5 +1,5 @@
 console.log('=== 🚨 EMERGENCY DEBUG SERVER LOADED 🚨 ===');
-console.log('=== Filesystem debugger ACTIVE ===');
+console.log('=== Admin Verification System ACTIVE ===');
 
 import express from 'express';
 import cors from 'cors';
@@ -9,47 +9,7 @@ import { pool } from './config/database.js';
 import fs from 'fs';
 import multer from 'multer';
 
-// 🚨 FILESYSTEM DEBUGGER
-const originalOpen = fs.open;
-fs.open = function(filePath, flags, mode, callback) {
-  if (typeof filePath === 'string' && filePath.includes('uploads')) {
-    console.log('\n🚨 🚨 🚨 FILESYSTEM UPLOADS ACCESS DETECTED! 🚨 🚨 🚨');
-    console.log('📁 File path:', filePath);
-    console.log('🎯 Flags:', flags);
-    
-    const stack = new Error().stack;
-    console.log('🔍 Full stack trace:');
-    console.log(stack);
-    
-    const error = new Error(`DEBUG: Filesystem access blocked to ${filePath}`);
-    error.code = 'EBLOCKED';
-    if (typeof callback === 'function') {
-      callback(error);
-    }
-    return;
-  }
-  
-  return originalOpen.call(this, filePath, flags, mode, callback);
-};
-console.log('✅ Filesystem debugger installed');
-
-// Override filesystem methods
-const originalWriteFileSync = fs.writeFileSync;
-fs.writeFileSync = (path, data, options) => {
-  if (path.includes('uploads')) {
-    console.log('🚨 BLOCKED filesystem write to:', path);
-    return;
-  }
-  return originalWriteFileSync(path, data, options);
-};
-
-// Force multer memoryStorage globally
-multer.diskStorage = () => {
-  console.log('🚨 diskStorage blocked - using memoryStorage');
-  return multer.memoryStorage();
-};
-
-// ✅ MULTER CONFIG
+// ✅ MULTER CONFIG - MEMORY STORAGE ONLY
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: {
@@ -82,29 +42,69 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// ==================== MIDDLEWARE ====================
 
-// ✅ OCCUPIED SEATS ENDPOINT - YANG DIPERLUKAN FRONTEND
-app.get('/bookings/occupied-seats', async (req, res) => {
+// ✅ AUTH MIDDLEWARE
+const authenticateToken = (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  
+  if (!token) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Access token required' 
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Invalid token' 
+    });
+  }
+};
+
+// ✅ ADMIN MIDDLEWARE
+const requireAdmin = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Admin access required' 
+    });
+  }
+  next();
+};
+
+// ==================== BOOKING ENDPOINTS ====================
+
+// Di file server utama (index.js atau app.js), tambahkan endpoint ini:
+
+// ✅ OCCUPIED SEATS ENDPOINT - FIX 404 ERROR
+app.get('/api/bookings/occupied-seats', async (req, res) => {
   let connection;
   try {
     const { showtime_id, movie_title } = req.query;
     
     console.log('🎯 Fetching occupied seats for:', { showtime_id, movie_title });
     
-    if (!showtime_id) {
+    if (!showtime_id || !movie_title) {
       return res.status(400).json({
         success: false,
-        message: 'Showtime ID is required'
+        message: 'Showtime ID and Movie Title are required'
       });
     }
 
     connection = await pool.promise().getConnection();
     
-    // Query untuk mendapatkan kursi yang sudah dipesan
+    // Query untuk mendapatkan kursi yang sudah dipesan (confirmed + pending_verification)
     const [bookings] = await connection.execute(
       `SELECT seat_numbers FROM bookings 
-       WHERE showtime_id = ? AND status = 'confirmed'`,
-      [showtime_id]
+       WHERE showtime_id = ? AND movie_title = ? 
+       AND status IN ('confirmed', 'pending_verification')`,
+      [showtime_id, movie_title]
     );
     
     connection.release();
@@ -159,8 +159,7 @@ app.get('/bookings/occupied-seats', async (req, res) => {
     if (connection) connection.release();
   }
 });
-
-// ✅ CREATE BOOKING ENDPOINT - YANG DIPERLUKAN FRONTEND
+// ✅ CREATE BOOKING ENDPOINT
 app.post('/bookings', async (req, res) => {
   let connection;
   try {
@@ -181,7 +180,6 @@ app.post('/bookings', async (req, res) => {
       total_amount
     });
 
-    // Validasi
     if (!showtime_id || !customer_name || !customer_email || !seat_numbers || !total_amount) {
       return res.status(400).json({
         success: false,
@@ -195,7 +193,7 @@ app.post('/bookings', async (req, res) => {
     const booking_reference = 'BK' + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();
     const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Insert booking
+    // Insert booking dengan status pending
     const query = `
       INSERT INTO bookings 
       (showtime_id, customer_name, customer_email, customer_phone, 
@@ -266,8 +264,9 @@ app.post('/bookings', async (req, res) => {
   }
 });
 
+// ==================== PAYMENT & VERIFICATION ENDPOINTS ====================
 
-// ✅ CONFIRM PAYMENT ENDPOINT - YANG DIPERLUKAN FRONTEND
+// ✅ CONFIRM PAYMENT - UPDATE STATUS KE pending_verification
 app.post('/bookings/confirm-payment', async (req, res) => {
   let connection;
   try {
@@ -284,9 +283,9 @@ app.post('/bookings/confirm-payment', async (req, res) => {
 
     connection = await pool.promise().getConnection();
     
-    // Update status to confirmed
+    // ✅ UPDATE STATUS KE pending_verification BUKAN confirmed
     const [result] = await connection.execute(
-      'UPDATE bookings SET status = "confirmed" WHERE booking_reference = ?',
+      'UPDATE bookings SET status = "pending_verification", payment_date = NOW() WHERE booking_reference = ?',
       [booking_reference]
     );
     
@@ -315,9 +314,8 @@ app.post('/bookings/confirm-payment', async (req, res) => {
         : [updatedBooking.seat_numbers];
     }
     
-    console.log('✅ Payment confirmed for:', booking_reference);
+    console.log('✅ Payment confirmed, waiting verification:', booking_reference);
     
-    // Response data
     const responseData = {
       ...updatedBooking,
       seat_numbers: seatNumbers
@@ -325,7 +323,7 @@ app.post('/bookings/confirm-payment', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Payment confirmed successfully!',
+      message: 'Payment proof uploaded! Waiting for admin verification.',
       data: responseData
     });
     
@@ -340,9 +338,7 @@ app.post('/bookings/confirm-payment', async (req, res) => {
   }
 });
 
-// ==================== PAYMENT UPLOAD ENDPOINTS ====================
-
-// ✅ ENDPOINT UPDATE PAYMENT BASE64 - YANG UTAMA
+// ✅ UPLOAD PAYMENT PROOF - BASE64 VERSION
 app.post('/api/update-payment-base64', async (req, res) => {
   console.log('=== 🚀 UPDATE PAYMENT BASE64 ===');
   
@@ -365,14 +361,14 @@ app.post('/api/update-payment-base64', async (req, res) => {
 
     const connection = await pool.promise().getConnection();
     
-    // Update database dengan base64
+    // Update database dengan base64 dan status pending_verification
     const [result] = await connection.execute(
       `UPDATE bookings SET 
         payment_proof = ?,
         payment_filename = ?,
         payment_base64 = ?,
         payment_mimetype = ?,
-        status = 'confirmed',
+        status = 'pending_verification',  // ✅ STATUS VERIFICATION
         payment_date = NOW()
       WHERE booking_reference = ?`,
       [payment_filename, payment_filename, payment_base64, payment_mimetype, booking_reference]
@@ -387,11 +383,11 @@ app.post('/api/update-payment-base64', async (req, res) => {
       });
     }
     
-    console.log('✅ Payment base64 saved successfully');
+    console.log('✅ Payment base64 saved, waiting verification');
     
     res.json({ 
       success: true, 
-      message: 'Payment proof saved successfully',
+      message: 'Payment proof uploaded! Waiting for admin verification.',
       fileName: payment_filename
     });
     
@@ -404,9 +400,9 @@ app.post('/api/update-payment-base64', async (req, res) => {
   }
 });
 
-// ✅ UPLOAD PAYMENT ENDPOINT - STANDALONE (MULTER)
+// ✅ UPLOAD PAYMENT - MULTER VERSION
 app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res) => {
-  console.log('=== 🚀 UPLOAD PAYMENT (STANDALONE ENDPOINT) ===');
+  console.log('=== 🚀 UPLOAD PAYMENT (MULTER) ===');
   
   if (!req.file || !req.body.booking_reference) {
     return res.status(400).json({ 
@@ -417,23 +413,21 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
 
   let connection;
   try {
-    // ✅ BASE64 ONLY - NO FILESYSTEM
     const base64Image = req.file.buffer.toString('base64');
     const fileName = `payment-${Date.now()}-${req.file.originalname}`;
     
     console.log('📤 Uploading for booking:', req.body.booking_reference);
-    console.log('📊 File buffer size:', req.file.buffer.length);
     
     connection = await pool.promise().getConnection();
 
-    // Update database
+    // Update dengan status pending_verification
     const [result] = await connection.execute(
       `UPDATE bookings SET 
         payment_proof = ?, 
         payment_filename = ?, 
         payment_base64 = ?, 
         payment_mimetype = ?,
-        status = 'confirmed',
+        status = 'pending_verification',  // ✅ STATUS VERIFICATION
         payment_date = NOW()
       WHERE booking_reference = ?`,
       [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
@@ -446,11 +440,11 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
       });
     }
     
-    console.log('✅ Upload successful (Base64)');
+    console.log('✅ Upload successful (Base64), waiting verification');
     
     res.json({
       success: true,
-      message: 'Payment proof uploaded successfully',
+      message: 'Payment proof uploaded! Waiting for admin verification.',
       fileName: fileName,
       bookingReference: req.body.booking_reference
     });
@@ -466,87 +460,195 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
   }
 });
 
-// ==================== ADMIN ENDPOINTS ====================
+// ==================== ADMIN VERIFICATION ENDPOINTS ====================
 
-// ✅ ADMIN GET ALL BOOKINGS (Untuk Database Viewer)
-app.get('/api/admin/all-bookings', async (req, res) => {
+// ✅ GET PENDING VERIFICATIONS
+app.get('/api/admin/pending-verifications', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    console.log('=== 📋 ADMIN ALL BOOKINGS REQUEST ===');
+    console.log('=== 📋 ADMIN PENDING VERIFICATIONS ===');
     
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'No token provided' });
-    }
-
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
-      if (decoded.role !== 'admin') {
-        return res.status(403).json({ success: false, message: 'Admin access required' });
-      }
-    } catch (jwtError) {
-      return res.status(401).json({ success: false, message: 'Invalid token' });
-    }
-
     const connection = await pool.promise().getConnection();
     
-    const [bookings] = await connection.execute(`
+    const [verifications] = await connection.execute(`
       SELECT 
-        id,
-        booking_reference,
-        customer_name,
-        customer_email,
-        customer_phone,
-        movie_title,
-        total_amount,
-        seat_numbers,
-        status,
-        payment_proof,
-        payment_filename,
-        payment_base64 IS NOT NULL as has_payment_image,
-        is_verified,
-        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date,
-        DATE_FORMAT(verified_at, '%Y-%m-%d %H:%i') as verified_at
-      FROM bookings 
-      ORDER BY booking_date DESC
+        b.id,
+        b.booking_reference,
+        b.movie_title,
+        b.showtime,
+        b.seat_numbers,
+        b.total_amount,
+        b.payment_proof,
+        b.payment_base64,
+        b.status,
+        b.created_at,
+        b.verified_at,
+        b.verified_by,
+        u.name as customer_name,
+        u.email as customer_email,
+        u.phone as customer_phone
+      FROM bookings b
+      LEFT JOIN users u ON b.user_id = u.id
+      WHERE b.status = 'pending_verification'
+      ORDER BY b.created_at ASC
     `);
     
     connection.release();
 
-    console.log(`✅ Found ${bookings.length} bookings for admin`);
+    console.log(`✅ Found ${verifications.length} pending verifications`);
+
+    // Format data
+    const formattedVerifications = verifications.map(booking => ({
+      ...booking,
+      has_payment_proof: !!(booking.payment_proof || booking.payment_base64),
+      seat_numbers: typeof booking.seat_numbers === 'string' 
+        ? JSON.parse(booking.seat_numbers) 
+        : booking.seat_numbers
+    }));
 
     res.json({
       success: true,
-      data: bookings
+      data: formattedVerifications
     });
 
   } catch (error) {
-    console.error('❌ Admin all bookings error:', error);
+    console.error('❌ Pending verifications error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch bookings: ' + error.message 
+      message: 'Failed to fetch pending verifications: ' + error.message 
     });
   }
 });
 
-// ✅ ADMIN VIEW PAYMENT PROOF IMAGE (Untuk lihat bukti pembayaran)
-app.get('/api/admin/payment-proof/:bookingReference', async (req, res) => {
+// ✅ VERIFY PAYMENT (APPROVE/REJECT)
+app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { bookingReference } = req.params;
-    console.log('=== 🖼️ ADMIN VIEW PAYMENT PROOF ===', bookingReference);
+    const { booking_reference, action, admin_notes } = req.body;
     
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'No token provided' });
+    console.log('=== ✅ ADMIN VERIFY PAYMENT ===', { booking_reference, action, admin_notes });
+
+    if (!booking_reference || !action) {
+      return res.status(400).json({
+        success: false,
+        message: 'Booking reference and action required'
+      });
     }
 
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
-      if (decoded.role !== 'admin') {
-        return res.status(403).json({ success: false, message: 'Admin access required' });
-      }
-    } catch (jwtError) {
-      return res.status(401).json({ success: false, message: 'Invalid token' });
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action. Use 'approve' or 'reject'"
+      });
     }
+
+    const connection = await pool.promise().getConnection();
+    
+    const newStatus = action === 'approve' ? 'confirmed' : 'payment_rejected';
+    const verifiedBy = req.user.username || 'admin';
+
+    // Update booking status
+    const [result] = await connection.execute(
+      `UPDATE bookings SET 
+        status = ?,
+        verified_at = NOW(),
+        verified_by = ?,
+        admin_notes = ?
+       WHERE booking_reference = ?`,
+      [newStatus, verifiedBy, admin_notes || '', booking_reference]
+    );
+    
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({
+        success: false,
+        message: 'Booking not found'
+      });
+    }
+
+    // Get updated booking
+    const [updatedBookings] = await connection.execute(
+      'SELECT * FROM bookings WHERE booking_reference = ?',
+      [booking_reference]
+    );
+    
+    connection.release();
+
+    const updatedBooking = updatedBookings[0];
+    
+    console.log(`✅ Payment ${action}ed for:`, booking_reference);
+
+    res.json({
+      success: true,
+      message: `Payment ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+      data: updatedBooking
+    });
+
+  } catch (error) {
+    console.error('❌ Verify payment error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Verification failed: ' + error.message 
+    });
+  }
+});
+
+// ✅ GET VERIFICATION STATISTICS
+app.get('/api/admin/verification-stats', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    console.log('=== 📊 VERIFICATION STATS ===');
+    
+    const connection = await pool.promise().getConnection();
+    
+    // Status counts
+    const [statusCounts] = await connection.execute(`
+      SELECT 
+        status,
+        COUNT(*) as count
+      FROM bookings 
+      WHERE status IN ('pending_verification', 'confirmed', 'payment_rejected')
+      GROUP BY status
+    `);
+    
+    // Today's processed count
+    const [todayProcessed] = await connection.execute(`
+      SELECT COUNT(*) as count 
+      FROM bookings 
+      WHERE verified_at::date = CURRENT_DATE
+    `);
+    
+    connection.release();
+
+    const stats = {
+      pending_verification: 0,
+      confirmed: 0,
+      payment_rejected: 0,
+      today_processed: parseInt(todayProcessed[0]?.count) || 0
+    };
+
+    statusCounts.forEach(row => {
+      stats[row.status] = parseInt(row.count);
+    });
+
+    console.log('✅ Verification stats:', stats);
+
+    res.json({
+      success: true,
+      data: stats
+    });
+
+  } catch (error) {
+    console.error('❌ Verification stats error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch stats: ' + error.message 
+    });
+  }
+});
+
+// ✅ GET PAYMENT PROOF FOR VERIFICATION
+app.get('/api/admin/payment-proof/:bookingReference', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { bookingReference } = req.params;
+    console.log('=== 🖼️ ADMIN PAYMENT PROOF ===', bookingReference);
 
     const connection = await pool.promise().getConnection();
     const [bookings] = await connection.execute(
@@ -558,13 +660,15 @@ app.get('/api/admin/payment-proof/:bookingReference', async (req, res) => {
     connection.release();
 
     if (bookings.length === 0) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Booking not found' 
+      });
     }
 
     const booking = bookings[0];
     
     if (booking.payment_base64) {
-      // Return full base64 image
       res.json({
         success: true,
         data: {
@@ -589,38 +693,75 @@ app.get('/api/admin/payment-proof/:bookingReference', async (req, res) => {
   }
 });
 
+// ==================== ADMIN DATABASE ENDPOINTS ====================
+
+// ✅ ADMIN GET ALL BOOKINGS
+app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    console.log('=== 📋 ADMIN ALL BOOKINGS ===');
+    
+    const connection = await pool.promise().getConnection();
+    
+    const [bookings] = await connection.execute(`
+      SELECT 
+        id,
+        booking_reference,
+        customer_name,
+        customer_email,
+        customer_phone,
+        movie_title,
+        total_amount,
+        seat_numbers,
+        status,
+        payment_proof,
+        payment_filename,
+        payment_base64 IS NOT NULL as has_payment_image,
+        verified_at,
+        verified_by,
+        admin_notes,
+        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date
+      FROM bookings 
+      ORDER BY booking_date DESC
+    `);
+    
+    connection.release();
+
+    console.log(`✅ Found ${bookings.length} bookings for admin`);
+
+    res.json({
+      success: true,
+      data: bookings
+    });
+
+  } catch (error) {
+    console.error('❌ Admin all bookings error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch bookings: ' + error.message 
+    });
+  }
+});
+
 // ✅ ADMIN UPDATE BOOKING STATUS
-app.put('/api/admin/bookings/:bookingReference/status', async (req, res) => {
+app.put('/api/admin/bookings/:bookingReference/status', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { bookingReference } = req.params;
     const { status } = req.body;
     
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'No token provided' });
-    }
-
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
-      if (decoded.role !== 'admin') {
-        return res.status(403).json({ success: false, message: 'Admin access required' });
-      }
-    } catch (jwtError) {
-      return res.status(401).json({ success: false, message: 'Invalid token' });
-    }
+    console.log('=== 🔄 UPDATE BOOKING STATUS ===', { bookingReference, status });
 
     const connection = await pool.promise().getConnection();
     
     const [result] = await connection.execute(
       `UPDATE bookings SET 
         status = ?,
-        is_verified = ?,
-        verified_at = ?
+        verified_at = ?,
+        verified_by = ?
        WHERE booking_reference = ?`,
       [
         status, 
-        status === 'confirmed' ? 1 : 0,
         status === 'confirmed' ? new Date() : null,
+        status === 'confirmed' ? req.user.username : null,
         bookingReference
       ]
     );
@@ -654,22 +795,11 @@ app.put('/api/admin/bookings/:bookingReference/status', async (req, res) => {
 
 // ==================== USER ENDPOINTS ====================
 
-// ✅ GET ALL BOOKINGS (Untuk regular bookings)
+// ✅ GET ALL BOOKINGS (Regular)
 app.get('/api/bookings', async (req, res) => {
   try {
     console.log('=== 📋 ALL BOOKINGS REQUEST ===');
     
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
-        // Optional: Check if admin for additional data
-      } catch (jwtError) {
-        console.log('⚠️ Invalid token, but proceeding with bookings');
-      }
-    }
-
     const connection = await pool.promise().getConnection();
     
     const [bookings] = await connection.execute(`
@@ -709,12 +839,11 @@ app.get('/api/bookings', async (req, res) => {
   }
 });
 
-// ✅ BUNDLE ORDERS ENDPOINT - SIMPLE
+// ✅ BUNDLE ORDERS ENDPOINT
 app.get('/api/bookings/bundle-orders', async (req, res) => {
   try {
     console.log('=== 📦 BUNDLE ORDERS REQUEST ===');
     
-    // Return empty array since we don't have bundle orders table yet
     res.json({
       success: true,
       data: [],
@@ -746,7 +875,6 @@ app.get('/api/bookings/my-bookings', async (req, res) => {
 
     const connection = await pool.promise().getConnection();
     
-    // Cari bookings berdasarkan username atau email
     let query = `
       SELECT 
         id,
@@ -808,7 +936,10 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username and password required' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Username and password required' 
+      });
     }
 
     const connection = await pool.promise().getConnection();
@@ -819,18 +950,28 @@ app.post('/api/auth/login', async (req, res) => {
     connection.release();
 
     if (users.length === 0) {
-      return res.status(401).json({ success: false, message: 'User not found' });
+      return res.status(401).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
     }
 
     const user = users[0];
     const validPassword = await bcrypt.compare(password, user.password);
 
     if (!validPassword) {
-      return res.status(401).json({ success: false, message: 'Invalid password' });
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid password' 
+      });
     }
 
     const token = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
+      { 
+        userId: user.id, 
+        username: user.username, 
+        role: user.role 
+      },
       process.env.JWT_SECRET || 'fallback-secret',
       { expiresIn: '24h' }
     );
@@ -851,7 +992,10 @@ app.post('/api/auth/login', async (req, res) => {
 
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 });
 
@@ -924,16 +1068,27 @@ app.get('/api/test', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Emergency Server Running!', status: 'OK' });
+  res.json({ 
+    message: 'Admin Verification Server Running!', 
+    status: 'OK',
+    features: ['Payment Verification System', 'Admin Dashboard', 'Base64 Image Storage']
+  });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    verification_system: 'ACTIVE'
+  });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚨 Emergency server running on port ${PORT}`);
+  console.log(`🚨 Admin Verification Server running on port ${PORT}`);
+  console.log(`✅ Payment Verification System: ACTIVE`);
+  console.log(`✅ Admin Endpoints: ENABLED`);
+  console.log(`✅ Base64 Image Storage: ACTIVE`);
 });
 
 export default app;
