@@ -159,31 +159,25 @@ router.get('/occupied-seats', async (req, res) => {
   }
 });
 
-// ✅ CREATE NEW BOOKING - DENGAN VALIDASI SEAT_NUMBERS
+// Di routes/bookings.js - endpoint POST /
 router.post('/', async (req, res) => {
   let connection;
   try {
-    const {
-      showtime_id,
-      customer_name,
-      customer_email,
-      customer_phone,
-      seat_numbers,
-      total_amount,
-      movie_title
-    } = req.body;
+    const { showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title } = req.body;
 
-    console.log('📥 Received booking creation request:', req.body);
+    console.log('📥 Creating booking with seat validation:', { 
+      showtime_id, movie_title, seat_numbers 
+    });
 
-    // ✅ VALIDASI LEBIH KETAT - CEK SEAT_NUMBERS TIDAK BOLEH EMPTY
-    if (!showtime_id || !customer_name || !customer_email || !seat_numbers || !total_amount) {
+    // ✅ VALIDASI: CEK SEAT_NUMBERS TIDAK BOLEH EMPTY
+    if (!showtime_id || !customer_name || !customer_email || !seat_numbers || !total_amount || !movie_title) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: showtime_id, customer_name, customer_email, seat_numbers, total_amount'
+        message: 'Missing required fields'
       });
     }
 
-    // ✅ VALIDASI KHUSUS UNTUK SEAT_NUMBERS
+    // ✅ VALIDASI SEAT_NUMBERS
     console.log('🔍 Validating seat_numbers:', {
       seat_numbers: seat_numbers,
       type: typeof seat_numbers,
@@ -214,11 +208,63 @@ router.post('/', async (req, res) => {
 
     connection = await pool.promise().getConnection();
 
-    // Generate unique booking reference dan verification code
-    const booking_reference = 'BK' + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();
-    const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
+    // ✅ VALIDASI: CEK KURSI MASIH AVAILABLE
+    const [occupiedSeatsResult] = await connection.execute(
+      `SELECT seat_numbers FROM bookings 
+       WHERE showtime_id = ? AND movie_title = ? 
+       AND status IN ('pending', 'pending_verification', 'confirmed')`,
+      [showtime_id, movie_title]
+    );
 
-    console.log('🆕 Generated booking reference:', booking_reference);
+    // Kumpulkan semua kursi yang sudah dipesan
+    const occupiedSeats = new Set();
+    occupiedSeatsResult.forEach(booking => {
+      try {
+        let seats;
+        if (typeof booking.seat_numbers === 'string') {
+          try {
+            seats = JSON.parse(booking.seat_numbers);
+          } catch (e) {
+            seats = booking.seat_numbers.split(',').map(seat => seat.trim());
+          }
+        } else {
+          seats = booking.seat_numbers;
+        }
+
+        if (Array.isArray(seats)) {
+          seats.forEach(seat => {
+            if (seat && seat.trim() !== '') {
+              occupiedSeats.add(seat.trim());
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error processing occupied seats:', error);
+      }
+    });
+
+    console.log('🎯 Occupied seats:', Array.from(occupiedSeats));
+
+    // ✅ CEK KONFLIK KURSI
+    let seatsToBook;
+    if (Array.isArray(seat_numbers)) {
+      seatsToBook = seat_numbers.map(seat => seat.trim()).filter(seat => seat !== '');
+    } else {
+      seatsToBook = [String(seat_numbers).trim()];
+    }
+
+    const conflictingSeats = seatsToBook.filter(seat => occupiedSeats.has(seat));
+    
+    if (conflictingSeats.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Kursi ${conflictingSeats.join(', ')} sudah dipesan. Silakan pilih kursi lain.`,
+        conflicting_seats: conflictingSeats,
+        available_seats: Array.from(occupiedSeats)
+      });
+    }
+
+    console.log('✅ Seats available, proceeding with booking...');
 
     // ✅ PASTIKAN SEAT_NUMBERS VALID SEBELUM DISIMPAN
     let seatNumbersToSave;
@@ -253,11 +299,11 @@ router.post('/', async (req, res) => {
       seatNumbersToSave = JSON.stringify([seatStr]);
     }
 
-    // Insert booking ke database
+    // ✅ INSERT BOOKING KE DATABASE (TANPA REFERENCE & CODE)
     const query = `
       INSERT INTO bookings 
-      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, booking_reference, verification_code, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
     `;
 
     const [result] = await connection.execute(query, [
@@ -267,15 +313,14 @@ router.post('/', async (req, res) => {
       customer_phone || null,
       seatNumbersToSave, // ✅ GUNAKAN YANG SUDAH DIVALIDASI
       total_amount,
-      movie_title || null,
-      booking_reference,
-      verification_code
+      movie_title,
     ]);
 
     const bookingId = result.insertId;
 
     console.log('✅ Booking created with ID:', bookingId);
     console.log('💾 Seat numbers saved:', seatNumbersToSave);
+    console.log('📝 Status: pending (waiting for payment)');
 
     // Dapatkan data booking yang baru dibuat
     const [newBookings] = await connection.execute(
@@ -297,20 +342,19 @@ router.post('/', async (req, res) => {
     // Response sukses
     res.status(201).json({
       success: true,
-      message: 'Booking created successfully',
+      message: 'Booking berhasil dibuat. Silakan lakukan pembayaran.',
       data: {
         id: newBooking.id,
-        booking_reference: newBooking.booking_reference,
-        verification_code: newBooking.verification_code,
+        status: newBooking.status,
         customer_name: newBooking.customer_name,
         customer_email: newBooking.customer_email,
         customer_phone: newBooking.customer_phone,
         total_amount: newBooking.total_amount,
         seat_numbers: parsedSeatNumbers,
-        status: newBooking.status,
-        booking_date: newBooking.booking_date,
         movie_title: newBooking.movie_title,
-        showtime_id: newBooking.showtime_id
+        showtime_id: newBooking.showtime_id,
+        booking_date: newBooking.booking_date,
+        instructions: 'Silakan lanjutkan ke pembayaran untuk mendapatkan kode booking'
       }
     });
 
@@ -438,7 +482,7 @@ router.post('/confirm-payment', async (req, res) => {
   }
 });
 
-// ✅ ADMIN VERIFY BY BOOKING REFERENCE & VERIFICATION CODE
+// ✅ ADMIN VERIFY - UBAH STATUS JADI confirmed
 router.post('/admin-verify-ticket', async (req, res) => {
   let connection;
   try {
@@ -446,25 +490,18 @@ router.post('/admin-verify-ticket', async (req, res) => {
     
     console.log('🔍 Admin verifying ticket:', { booking_reference, verification_code });
     
-    if (!booking_reference || !verification_code) {
-      return res.status(400).json({
-        valid: false,
-        message: 'Booking reference dan verification code diperlukan'
-      });
-    }
-
     connection = await pool.promise().getConnection();
     
-    // ✅ CEK BOOKING - PASTIKAN STATUS CONFIRMED
+    // ✅ CEK APAKAH SUDAH pending_verification
     const [bookings] = await connection.execute(
-      'SELECT * FROM bookings WHERE booking_reference = ? AND status = "confirmed"',
+      'SELECT * FROM bookings WHERE booking_reference = ? AND status = "pending_verification"',
       [booking_reference]
     );
     
     if (bookings.length === 0) {
       return res.json({
         valid: false,
-        message: 'Tiket tidak ditemukan atau belum dikonfirmasi'
+        message: 'Tiket tidak ditemukan atau sudah diverifikasi'
       });
     }
     
@@ -478,32 +515,53 @@ router.post('/admin-verify-ticket', async (req, res) => {
       });
     }
     
-    // ✅ CEK JIKA SUDAH DIGUNAKAN
-    if (booking.is_verified) {
+    // ✅ VALIDASI: CEK APAKAH KURSI MASIH AVAILABLE
+    const [occupiedSeats] = await connection.execute(
+      `SELECT seat_numbers FROM bookings 
+       WHERE showtime_id = ? AND movie_title = ? 
+       AND status = 'confirmed' AND booking_reference != ?`,
+      [booking.showtime_id, booking.movie_title, booking_reference]
+    );
+    
+    // Kumpulkan kursi yang sudah terbooking
+    const allOccupiedSeats = new Set();
+    occupiedSeats.forEach(occBooking => {
+      try {
+        let seats = JSON.parse(occBooking.seat_numbers);
+        if (Array.isArray(seats)) {
+          seats.forEach(seat => allOccupiedSeats.add(seat));
+        }
+      } catch (error) {
+        console.log('Error parsing occupied seats:', error);
+      }
+    });
+    
+    // Parse kursi dari booking yang diverifikasi
+    let currentSeats;
+    try {
+      currentSeats = JSON.parse(booking.seat_numbers);
+    } catch (error) {
+      currentSeats = [booking.seat_numbers];
+    }
+    
+    // ✅ CEK KONFLIK KURSI
+    const conflictingSeats = currentSeats.filter(seat => allOccupiedSeats.has(seat));
+    if (conflictingSeats.length > 0) {
       return res.json({
         valid: false,
-        message: 'Tiket sudah digunakan sebelumnya',
-        used_at: booking.verified_at,
-        ticket_info: {
-          movie: booking.movie_title,
-          booking_reference: booking.booking_reference,
-          seats: JSON.parse(booking.seat_numbers),
-          customer: booking.customer_name,
-          total_paid: booking.total_amount,
-          status: 'ALREADY_USED'
-        }
+        message: `Kursi ${conflictingSeats.join(', ')} sudah dipesan oleh orang lain`
       });
     }
     
-    // ✅ MARK AS VERIFIED
-    await connection.execute(
-      'UPDATE bookings SET is_verified = 1, verified_at = NOW(), verified_by = "admin" WHERE booking_reference = ?',
+    // ✅ UPDATE STATUS JADI confirmed
+    const [updateResult] = await connection.execute(
+      'UPDATE bookings SET status = "confirmed", verified_at = NOW(), verified_by = "admin" WHERE booking_reference = ?',
       [booking_reference]
     );
     
-    console.log('✅ Ticket verified by admin:', booking_reference);
+    console.log('✅ Ticket verified! Status: confirmed');
     
-    // ✅ PARSE SEAT NUMBERS
+    // Parse seat numbers untuk response
     let seatNumbers;
     try {
       seatNumbers = JSON.parse(booking.seat_numbers);
@@ -519,13 +577,14 @@ router.post('/admin-verify-ticket', async (req, res) => {
       ticket_info: {
         movie: booking.movie_title,
         booking_reference: booking.booking_reference,
-        showtime_id: booking.showtime_id,
+        verification_code: booking.verification_code,
         seats: seatNumbers,
         customer: booking.customer_name,
         customer_email: booking.customer_email,
         total_paid: booking.total_amount,
-        status: 'VERIFIED',
-        verified_at: new Date().toISOString()
+        status: 'confirmed',
+        verified_at: new Date().toISOString(),
+        showtime_id: booking.showtime_id
       }
     });
     
@@ -970,60 +1029,94 @@ router.post('/bundle-order', async (req, res) => {
   }
 });
 
-// ✅ PERBAIKI ENDPOINT UPLOAD-PAYMENT - UPDATE STATUS KE pending_verification
+// Di routes/bookings.js - endpoint /upload-payment
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
   let connection;
   try {
-    console.log('=== 🚀 UPLOAD PAYMENT (FIXED - NO FILESYSTEM) ===');
+    console.log('=== 🚀 UPLOAD PAYMENT - GENERATE REFERENCE & CODE ===');
     
-    if (!req.file || !req.file.buffer) {
+    if (!req.file || !req.body.booking_id) {
       return res.status(400).json({
         success: false,
-        message: 'No file uploaded'
+        message: 'File and booking ID required'
       });
     }
 
-    if (!req.body.booking_reference) {
-      return res.status(400).json({
-        success: false, 
-        message: 'Booking reference required'
-      });
-    }
+    // ✅ GENERATE REFERENCE & CODE SAAT UPLOAD BUKTI BAYAR
+    const booking_reference = 'TIX' + Date.now().toString().slice(-6) + Math.random().toString(36).substr(2, 3).toUpperCase();
+    const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ✅ HANYA SIMPAN BASE64 KE DATABASE
     const base64Image = req.file.buffer.toString('base64');
     const fileName = `payment-${Date.now()}-${req.file.originalname}`;
     
-    console.log('📤 Uploading for booking:', req.body.booking_reference);
+    console.log('📤 Uploading for booking ID:', req.body.booking_id);
+    console.log('🎫 Generated:', { booking_reference, verification_code });
     
     connection = await pool.promise().getConnection();
 
-    // ✅ UPDATE STATUS KE pending_verification BUKAN confirmed
+    // ✅ UPDATE DENGAN REFERENCE, CODE, DAN STATUS pending_verification
     const [result] = await connection.execute(
       `UPDATE bookings SET 
+        booking_reference = ?,
+        verification_code = ?,
         payment_proof = ?, 
         payment_filename = ?, 
         payment_base64 = ?, 
         payment_mimetype = ?,
-        status = 'pending_verification',  // ✅ UPDATE STATUS
+        status = 'pending_verification',
         payment_date = NOW()
-      WHERE booking_reference = ?`,
-      [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
+      WHERE id = ? AND status = 'pending'`, // Hanya update jika masih pending
+      [
+        booking_reference,
+        verification_code,
+        fileName,
+        req.file.originalname,
+        base64Image,
+        req.file.mimetype,
+        req.body.booking_id
+      ]
     );
     
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Booking not found or already processed'
       });
     }
     
-    console.log('✅ Upload successful! Status: pending_verification');
+    // Get updated booking data
+    const [bookings] = await connection.execute(
+      'SELECT * FROM bookings WHERE id = ?',
+      [req.body.booking_id]
+    );
+    
+    const booking = bookings[0];
+    
+    // Parse seat numbers
+    let seatNumbers;
+    try {
+      seatNumbers = JSON.parse(booking.seat_numbers);
+    } catch (error) {
+      seatNumbers = typeof booking.seat_numbers === 'string' 
+        ? booking.seat_numbers.split(',').map(s => s.trim())
+        : [booking.seat_numbers];
+    }
+    
+    console.log('✅ Payment uploaded! Status: pending_verification');
     
     res.json({
       success: true,
       message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
-      fileName: fileName
+      data: {
+        booking_reference: booking_reference,
+        verification_code: verification_code,
+        status: 'pending_verification',
+        customer_name: booking.customer_name,
+        movie_title: booking.movie_title,
+        seat_numbers: seatNumbers,
+        total_amount: booking.total_amount,
+        instructions: 'Tunggu verifikasi admin untuk mendapatkan e-ticket'
+      }
     });
     
   } catch (error) {
@@ -1035,7 +1128,7 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
   } finally {
     if (connection) connection.release();
   }
-});
+}); 
 
 // ✅ ENDPOINT UNTUK BASE64 UPLOAD (COMPATIBILITY) - UPDATE STATUS
 router.post('/update-payment-base64', async (req, res) => {
