@@ -438,75 +438,72 @@ router.post('/confirm-payment', async (req, res) => {
   }
 });
 
-// ✅ SCAN TICKET - UPDATE DENGAN STATUS VERIFIKASI
-router.post('/scan-ticket', async (req, res) => {
+// ✅ ADMIN VERIFY BY BOOKING REFERENCE & VERIFICATION CODE
+router.post('/admin-verify-ticket', async (req, res) => {
   let connection;
   try {
-    const { qr_data } = req.body;
+    const { booking_reference, verification_code } = req.body;
     
-    console.log('🔍 Scanning QR ticket:', qr_data);
+    console.log('🔍 Admin verifying ticket:', { booking_reference, verification_code });
     
-    if (!qr_data) {
+    if (!booking_reference || !verification_code) {
       return res.status(400).json({
         valid: false,
-        message: 'QR data is required'
-      });
-    }
-
-    // Parse QR data
-    let ticketInfo;
-    try {
-      ticketInfo = JSON.parse(qr_data);
-    } catch (parseError) {
-      return res.status(400).json({
-        valid: false,
-        message: 'Invalid QR code format'
+        message: 'Booking reference dan verification code diperlukan'
       });
     }
 
     connection = await pool.promise().getConnection();
     
-    // ✅ UPDATE: HANYA SCAN BOOKING YANG SUDAH CONFIRMED
+    // ✅ CEK BOOKING - PASTIKAN STATUS CONFIRMED
     const [bookings] = await connection.execute(
       'SELECT * FROM bookings WHERE booking_reference = ? AND status = "confirmed"',
-      [ticketInfo.booking_reference]
+      [booking_reference]
     );
     
     if (bookings.length === 0) {
       return res.json({
         valid: false,
-        message: 'Tiket tidak valid atau belum dikonfirmasi'
+        message: 'Tiket tidak ditemukan atau belum dikonfirmasi'
       });
     }
     
     const booking = bookings[0];
     
-    // Verifikasi kode
-    if (booking.verification_code !== ticketInfo.verification_code) {
+    // ✅ VERIFIKASI KODE
+    if (booking.verification_code !== verification_code) {
       return res.json({
         valid: false,
         message: 'Kode verifikasi tidak sesuai'
       });
     }
     
-    // Check jika sudah digunakan
+    // ✅ CEK JIKA SUDAH DIGUNAKAN
     if (booking.is_verified) {
       return res.json({
         valid: false,
         message: 'Tiket sudah digunakan sebelumnya',
-        used_at: booking.verified_at
+        used_at: booking.verified_at,
+        ticket_info: {
+          movie: booking.movie_title,
+          booking_reference: booking.booking_reference,
+          seats: JSON.parse(booking.seat_numbers),
+          customer: booking.customer_name,
+          total_paid: booking.total_amount,
+          status: 'ALREADY_USED'
+        }
       });
     }
     
-    // Mark as verified
+    // ✅ MARK AS VERIFIED
     await connection.execute(
-      'UPDATE bookings SET is_verified = 1, verified_at = NOW() WHERE booking_reference = ?',
-      [ticketInfo.booking_reference]
+      'UPDATE bookings SET is_verified = 1, verified_at = NOW(), verified_by = "admin" WHERE booking_reference = ?',
+      [booking_reference]
     );
     
-    console.log('✅ Ticket verified successfully:', ticketInfo.booking_reference);
+    console.log('✅ Ticket verified by admin:', booking_reference);
     
-    // Parse seat numbers
+    // ✅ PARSE SEAT NUMBERS
     let seatNumbers;
     try {
       seatNumbers = JSON.parse(booking.seat_numbers);
@@ -514,21 +511,6 @@ router.post('/scan-ticket', async (req, res) => {
       seatNumbers = typeof booking.seat_numbers === 'string' 
         ? booking.seat_numbers.split(',').map(s => s.trim())
         : [booking.seat_numbers];
-    }
-    
-    // ✅ BROADCAST REAL-TIME UPDATE - KURSI SUDAH DIVALIDASI
-    if (global.broadcastSeatUpdate) {
-      console.log('📢 Broadcasting seat validation update');
-      
-      const seatUpdates = seatNumbers.map(seatNumber => ({
-        seat_number: seatNumber,
-        status: 'occupied',
-        booking_reference: booking.booking_reference,
-        action: 'ticket_validated',
-        timestamp: new Date().toISOString()
-      }));
-      
-      global.broadcastSeatUpdate(booking.showtime_id, seatUpdates);
     }
     
     res.json({
@@ -540,17 +522,18 @@ router.post('/scan-ticket', async (req, res) => {
         showtime_id: booking.showtime_id,
         seats: seatNumbers,
         customer: booking.customer_name,
+        customer_email: booking.customer_email,
         total_paid: booking.total_amount,
         status: 'VERIFIED',
-        verification_code: booking.verification_code
+        verified_at: new Date().toISOString()
       }
     });
     
   } catch (error) {
-    console.error('❌ QR scan error:', error);
+    console.error('❌ Admin verify error:', error);
     res.status(500).json({
       valid: false,
-      message: 'Scan error: ' + error.message
+      message: 'Verifikasi error: ' + error.message
     });
   } finally {
     if (connection) connection.release();
