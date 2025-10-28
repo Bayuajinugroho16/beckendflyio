@@ -286,62 +286,56 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
   }
 });
 
-// GET /api/admin/all-bookings
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
   let connection;
   try {
     connection = await pool.promise().getConnection();
 
     const [bookings] = await connection.execute(`
-      SELECT 
-        id,
-        booking_reference,
-        customer_name,
-        customer_email,
-        customer_phone,
-        movie_title,
-        total_amount,
-        seat_numbers,
-        status,
-        payment_proof,
-        payment_filename,
-        payment_base64 IS NOT NULL as has_payment_image,
-        verified_at,
-        verified_by,
-        admin_notes,
-        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date
+      SELECT *
       FROM bookings
       ORDER BY booking_date DESC
     `);
 
     connection.release();
 
-    // SAFE parsing seat_numbers
-    const formattedBookings = bookings.map(b => {
+    const formatted = bookings.map(b => {
       let seats = [];
       if (b.seat_numbers) {
-        try {
-          const parsed = JSON.parse(b.seat_numbers);
-          seats = Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
-          // fallback: jika JSON invalid, coba split string by comma
-          seats = typeof b.seat_numbers === 'string' 
-            ? b.seat_numbers.split(',').map(s => s.trim()).filter(Boolean) 
-            : [];
+        try { seats = JSON.parse(b.seat_numbers); }
+        catch { 
+          try { seats = b.seat_numbers.replace(/[^A-Z0-9,]/gi,'').split(',').filter(Boolean); }
+          catch { seats = []; }
         }
+        if (!Array.isArray(seats)) seats = [seats];
       }
       return {
-        ...b,
-        seat_numbers: seats
+        id: b.id,
+        booking_reference: b.booking_reference,
+        customer_name: b.customer_name || '',
+        customer_email: b.customer_email || '',
+        customer_phone: b.customer_phone || '',
+        movie_title: b.movie_title || '',
+        total_amount: b.total_amount || 0,
+        seat_numbers: seats,
+        status: b.status,
+        payment_proof: b.payment_proof || '',
+        payment_filename: b.payment_filename || '',
+        has_payment_image: !!b.payment_base64,
+        verified_at: b.verified_at,
+        verified_by: b.verified_by,
+        admin_notes: b.admin_notes || '',
+        booking_date: b.booking_date
       };
     });
 
-    res.json({ success: true, data: formattedBookings });
+    console.log('🔹 Total bookings formatted:', formatted.length);
+    res.json({ success: true, data: formatted });
 
-  } catch (error) {
+  } catch (err) {
     if (connection) connection.release();
-    console.error('❌ Admin all bookings error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
+    console.error('❌ /api/admin/all-bookings error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + err.message });
   }
 });
 
