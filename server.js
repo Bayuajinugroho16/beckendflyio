@@ -12,6 +12,20 @@ import multer from 'multer';
 
 
 const app = express();
+
+// ✅ FIX CORS
+app.use(cors({
+  origin: [
+    'https://pleaseee-one.vercel.app',  // ✅ PRODUCTION FRONTEND
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 // ✅ MULTER CONFIG - SIMPAN KE server/public/bukti_pembayaran
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -49,18 +63,6 @@ app.use('/bukti_pembayaran', express.static('public/bukti_pembayaran'));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// ✅ FIX CORS
-app.use(cors({
-  origin: [
-    'https://pleaseee-one.vercel.app',  // ✅ PRODUCTION FRONTEND
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 
 // ==================== MIDDLEWARE ====================
 
@@ -419,8 +421,9 @@ app.post('/api/update-payment-base64', async (req, res) => {
   }
 });
 
-// ✅ UPLOAD PAYMENT - SIMPAN KE LOCAL FOLDER
-app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res) => {
+app.options('/api/upload-payment', cors()); // penting untuk preflight
+
+app.post('/api/upload-payment', cors(), upload.single('payment_proof'), async (req, res) => {
   console.log('=== 🚀 UPLOAD PAYMENT TO LOCAL FOLDER ===');
   
   if (!req.file || !req.body.booking_reference) {
@@ -441,7 +444,6 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
     
     connection = await pool.promise().getConnection();
 
-    // ✅ SIMPAN PATH FILE KE DATABASE
     const [result] = await connection.execute(
       `UPDATE bookings SET 
         payment_proof = ?,           
@@ -459,7 +461,6 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
     );
     
     if (result.affectedRows === 0) {
-      // Hapus file jika booking tidak ditemukan
       fs.unlinkSync(req.file.path);
       return res.status(404).json({
         success: false,
@@ -482,7 +483,6 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
     
   } catch (error) {
     console.error('❌ Upload error:', error);
-    // Hapus file jika error
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
@@ -494,6 +494,7 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
     if (connection) connection.release();
   }
 });
+
 
 // ==================== ADMIN VERIFICATION ENDPOINTS ====================
 
