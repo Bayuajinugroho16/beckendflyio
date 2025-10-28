@@ -64,7 +64,11 @@ const authenticateToken = (req, res, next) => {
 };
 
 const requireAdmin = (req, res, next) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ success: false, message: 'Admin access required' });
+  console.log('🔹 User role:', req.user?.role);
+  if (req.user?.role !== 'admin') {
+    console.log('❌ Forbidden: admin required');
+    return res.status(403).json({ success: false, message: 'Admin access required' });
+  }
   next();
 };
 
@@ -77,6 +81,8 @@ cron.schedule('*/5 * * * *', async () => {
       AND TIMESTAMPDIFF(MINUTE, uploaded_at, NOW()) > 10
   `);
 });
+
+
 
 
 // ==================== BOOKING ENDPOINTS ====================
@@ -338,6 +344,8 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
     res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + err.message });
   }
 });
+
+
 
 
 
