@@ -80,8 +80,8 @@ const requireAdmin = (req, res, next) => {
 
 // ==================== BOOKING ENDPOINTS ====================
 
-// ✅ OCCUPIED SEATS ENDPOINT
-app.get('/bookings/occupied-seats', async (req, res) => {
+// ✅ OCCUPIED SEATS ENDPOINT - DENGAN /api
+app.get('/api/bookings/occupied-seats', async (req, res) => {
   let connection;
   try {
     const { showtime_id, movie_title } = req.query;
@@ -97,10 +97,12 @@ app.get('/bookings/occupied-seats', async (req, res) => {
 
     connection = await pool.promise().getConnection();
     
+    // ✅ PERBAIKI QUERY - tambahkan movie_title filter
     const [bookings] = await connection.execute(
       `SELECT seat_numbers FROM bookings 
-       WHERE showtime_id = ? AND status IN ('confirmed', 'pending_verification')`,
-      [showtime_id]
+       WHERE showtime_id = ? AND movie_title = ?
+       AND status IN ('confirmed', 'pending_verification')`,
+      [showtime_id, movie_title]
     );
     
     connection.release();
@@ -154,8 +156,9 @@ app.get('/bookings/occupied-seats', async (req, res) => {
   }
 });
 
-// ✅ CREATE BOOKING ENDPOINT
-app.post('/bookings', async (req, res) => {
+
+// ✅ Juga tambahkan endpoint CREATE BOOKING dengan /api
+app.post('/api/bookings', async (req, res) => {
   let connection;
   try {
     const {
@@ -168,7 +171,7 @@ app.post('/bookings', async (req, res) => {
       movie_title
     } = req.body;
 
-    console.log('📥 Creating booking:', {
+    console.log('📥 Creating booking via /api/bookings:', {
       showtime_id,
       customer_name,
       seat_numbers,
@@ -227,7 +230,7 @@ app.post('/bookings', async (req, res) => {
       parsedSeatNumbers = [newBooking.seat_numbers];
     }
 
-    console.log('✅ Booking created:', booking_reference);
+    console.log('✅ Booking created via /api/bookings:', booking_reference);
 
     res.status(201).json({
       success: true,
@@ -259,15 +262,16 @@ app.post('/bookings', async (req, res) => {
   }
 });
 
+
 // ==================== PAYMENT & VERIFICATION ENDPOINTS ====================
 
-// ✅ CONFIRM PAYMENT - UPDATE STATUS KE pending_verification
-app.post('/bookings/confirm-payment', async (req, res) => {
+// ✅ Tambahkan juga endpoint confirm-payment dengan /api
+app.post('/api/bookings/confirm-payment', async (req, res) => {
   let connection;
   try {
     const { booking_reference } = req.body;
     
-    console.log('💰 Confirming payment for:', booking_reference);
+    console.log('💰 Confirming payment via /api for:', booking_reference);
 
     if (!booking_reference) {
       return res.status(400).json({
@@ -309,7 +313,7 @@ app.post('/bookings/confirm-payment', async (req, res) => {
         : [updatedBooking.seat_numbers];
     }
     
-    console.log('✅ Payment confirmed, waiting verification:', booking_reference);
+    console.log('✅ Payment confirmed via /api, waiting verification:', booking_reference);
     
     const responseData = {
       ...updatedBooking,

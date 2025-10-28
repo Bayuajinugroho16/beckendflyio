@@ -33,7 +33,8 @@ router.get('/', async (req, res) => {
         id, booking_reference, customer_name, customer_email,
         customer_phone, movie_title, showtime_id, seat_numbers,
         total_amount, status, booking_date, is_verified,
-        payment_proof, payment_filename
+        payment_proof, payment_filename, payment_base64,
+        verified_at, verified_by, admin_notes
       FROM bookings 
       ORDER BY booking_date DESC
     `);
@@ -59,7 +60,7 @@ router.get('/', async (req, res) => {
       return {
         ...booking,
         seat_numbers: seatNumbers,
-        has_payment: !!booking.payment_proof
+        has_payment: !!(booking.payment_proof || booking.payment_base64)
       };
     });
     
@@ -80,28 +81,30 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ✅ OCCUPIED SEATS ENDPOINT
+// ✅ OCCUPIED SEATS ENDPOINT - UPDATE DENGAN pending_verification
 router.get('/occupied-seats', async (req, res) => {
-let connection;
-try {
-const { showtime_id, movie_title } = req.query;
+  let connection;
+  try {
+    const { showtime_id, movie_title } = req.query;
 
     console.log('🎯 Fetching occupied seats for showtime:', showtime_id, 'and movie:', movie_title);
 
-   if (!showtime_id || !movie_title) {
-     return res.status(400).json({
-       success: false,
-       message: 'Showtime ID and Movie Title are required'
-     });
-   }
+    if (!showtime_id || !movie_title) {
+      return res.status(400).json({
+        success: false,
+        message: 'Showtime ID and Movie Title are required'
+      });
+    }
 
     connection = await pool.promise().getConnection();
 
-    // Ambil semua booking yang confirmed untuk showtime ini
+    // ✅ UPDATE: INCLUDE pending_verification SEATS
     const [bookings] = await connection.execute(
-     'SELECT seat_numbers FROM bookings WHERE showtime_id = ? AND movie_title = ? AND status = "confirmed"',
-     [showtime_id, movie_title]
-   );
+      `SELECT seat_numbers FROM bookings 
+       WHERE showtime_id = ? AND movie_title = ? 
+       AND status IN ('confirmed', 'pending_verification')`,
+      [showtime_id, movie_title]
+    );
 
     console.log(`✅ Found ${bookings.length} bookings for showtime ${showtime_id}`);
 
@@ -322,7 +325,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ✅ PERBAIKI CONFIRM PAYMENT - HAPUS FILESYSTEM CHECK
+// ✅ PERBAIKI CONFIRM PAYMENT - UPDATE KE pending_verification
 router.post('/confirm-payment', async (req, res) => {
   let connection;
   try {
@@ -368,10 +371,17 @@ router.post('/confirm-payment', async (req, res) => {
         message: 'Booking sudah dikonfirmasi sebelumnya'
       });
     }
+
+    if (booking.status === 'pending_verification') {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment proof sudah diupload, menunggu verifikasi admin'
+      });
+    }
     
-    // ✅ UPDATE STATUS
+    // ✅ UPDATE STATUS KE pending_verification BUKAN confirmed
     const [result] = await connection.execute(
-      'UPDATE bookings SET status = "confirmed" WHERE booking_reference = ?',
+      'UPDATE bookings SET status = "pending_verification", payment_date = NOW() WHERE booking_reference = ?',
       [booking_reference]
     );
     
@@ -393,7 +403,7 @@ router.post('/confirm-payment', async (req, res) => {
         : [updatedBooking.seat_numbers];
     }
     
-    console.log('✅ Payment confirmed for:', booking_reference);
+    console.log('✅ Payment confirmed, waiting verification:', booking_reference);
     
     // Response data
     const responseData = {
@@ -413,7 +423,7 @@ router.post('/confirm-payment', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Pembayaran berhasil dikonfirmasi! Tiket Anda sudah aktif.',
+      message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
       data: responseData
     });
     
@@ -428,7 +438,7 @@ router.post('/confirm-payment', async (req, res) => {
   }
 });
 
-// ✅ SCAN TICKET - HAPUS DUPLIKAT, GUNAKAN YANG INI SAJA
+// ✅ SCAN TICKET - UPDATE DENGAN STATUS VERIFIKASI
 router.post('/scan-ticket', async (req, res) => {
   let connection;
   try {
@@ -456,7 +466,7 @@ router.post('/scan-ticket', async (req, res) => {
 
     connection = await pool.promise().getConnection();
     
-    // Cari booking berdasarkan reference
+    // ✅ UPDATE: HANYA SCAN BOOKING YANG SUDAH CONFIRMED
     const [bookings] = await connection.execute(
       'SELECT * FROM bookings WHERE booking_reference = ? AND status = "confirmed"',
       [ticketInfo.booking_reference]
@@ -465,7 +475,7 @@ router.post('/scan-ticket', async (req, res) => {
     if (bookings.length === 0) {
       return res.json({
         valid: false,
-        message: 'Tiket tidak valid atau tidak ditemukan'
+        message: 'Tiket tidak valid atau belum dikonfirmasi'
       });
     }
     
@@ -591,7 +601,7 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
   }
 });
 
-// ✅ GET USER BOOKINGS (MY-BOOKINGS)
+// ✅ GET USER BOOKINGS (MY-BOOKINGS) - UPDATE STATUS MAPPING
 router.get('/my-bookings', async (req, res) => {
   let connection;
   try {
@@ -643,7 +653,7 @@ router.get('/my-bookings', async (req, res) => {
     
     const allOrders = [...regularBookings, ...bundleOrders];
     
-    // ✅ PROCESS SEAT NUMBERS
+    // ✅ PROCESS SEAT NUMBERS & UPDATE STATUS MAPPING
     const parsedBookings = allOrders.map(booking => {
       let seatNumbers = [];
       
@@ -674,10 +684,13 @@ router.get('/my-bookings', async (req, res) => {
         7: '19:00 - Studio 2'
       };
 
+      // ✅ UPDATE STATUS MAPPING DENGAN pending_verification
       const statusMap = {
         'pending': { text: 'Pending Payment', class: 'pending' },
-        'confirmed': { text: 'Confirmed', class: 'confirmed' },
-        'cancelled': { text: 'Cancelled', class: 'cancelled' }
+        'pending_verification': { text: 'Menunggu Verifikasi', class: 'pending-verification' },
+        'confirmed': { text: 'Terkonfirmasi', class: 'confirmed' },
+        'payment_rejected': { text: 'Pembayaran Ditolak', class: 'rejected' },
+        'cancelled': { text: 'Dibatalkan', class: 'cancelled' }
       };
       
       const statusInfo = statusMap[booking.status] || { text: booking.status, class: 'unknown' };
@@ -729,7 +742,9 @@ router.get('/my-bookings', async (req, res) => {
         regular: regularBookings.length,
         bundle: bundleOrders.length,
         confirmed: parsedBookings.filter(b => b.status === 'confirmed').length,
+        pending_verification: parsedBookings.filter(b => b.status === 'pending_verification').length,
         pending: parsedBookings.filter(b => b.status === 'pending').length,
+        rejected: parsedBookings.filter(b => b.status === 'payment_rejected').length,
         cancelled: parsedBookings.filter(b => b.status === 'cancelled').length
       }
     });
@@ -746,7 +761,7 @@ router.get('/my-bookings', async (req, res) => {
   }
 });
 
-// ✅ GET UPLOADED PAYMENT PROOFS FOR ADMIN
+// ✅ GET UPLOADED PAYMENT PROOFS FOR ADMIN - UPDATE STATUS
 router.get('/uploaded-payments', async (req, res) => {
   let connection;
   try {
@@ -760,7 +775,9 @@ router.get('/uploaded-payments', async (req, res) => {
         total_amount,
         payment_filename,
         status,
-        booking_date
+        booking_date,
+        verified_at,
+        verified_by
       FROM bookings 
       WHERE payment_base64 IS NOT NULL 
       ORDER BY booking_date DESC
@@ -970,8 +987,7 @@ router.post('/bundle-order', async (req, res) => {
   }
 });
 
-
-// ✅ PERBAIKI ENDPOINT UPLOAD-PAYMENT - NO FILESYSTEM
+// ✅ PERBAIKI ENDPOINT UPLOAD-PAYMENT - UPDATE STATUS KE pending_verification
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
   let connection;
   try {
@@ -999,15 +1015,15 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
     
     connection = await pool.promise().getConnection();
 
-    // ✅ UPDATE HANYA DI DATABASE
+    // ✅ UPDATE STATUS KE pending_verification BUKAN confirmed
     const [result] = await connection.execute(
       `UPDATE bookings SET 
         payment_proof = ?, 
         payment_filename = ?, 
         payment_base64 = ?, 
         payment_mimetype = ?,
-        status = 'confirmed',
-        updated_at = NOW()
+        status = 'pending_verification',  // ✅ UPDATE STATUS
+        payment_date = NOW()
       WHERE booking_reference = ?`,
       [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
     );
@@ -1019,11 +1035,11 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
       });
     }
     
-    console.log('✅ Upload successful! Database only.');
+    console.log('✅ Upload successful! Status: pending_verification');
     
     res.json({
       success: true,
-      message: 'Payment proof uploaded successfully',
+      message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
       fileName: fileName
     });
     
@@ -1037,7 +1053,8 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
     if (connection) connection.release();
   }
 });
-// ✅ ENDPOINT UNTUK BASE64 UPLOAD (COMPATIBILITY)
+
+// ✅ ENDPOINT UNTUK BASE64 UPLOAD (COMPATIBILITY) - UPDATE STATUS
 router.post('/update-payment-base64', async (req, res) => {
   let connection;
   try {
@@ -1056,15 +1073,15 @@ router.post('/update-payment-base64', async (req, res) => {
     
     connection = await pool.promise().getConnection();
 
-    // ✅ SIMPAN BASE64 KE DATABASE
+    // ✅ SIMPAN BASE64 KE DATABASE DENGAN STATUS pending_verification
     const [result] = await connection.execute(
       `UPDATE bookings SET 
         payment_proof = ?, 
         payment_filename = ?, 
         payment_base64 = ?, 
         payment_mimetype = ?,
-        status = 'confirmed',
-        updated_at = NOW()
+        status = 'pending_verification',  // ✅ UPDATE STATUS
+        payment_date = NOW()
       WHERE booking_reference = ?`,
       [
         `base64-${Date.now()}-${payment_filename}`,
@@ -1082,11 +1099,11 @@ router.post('/update-payment-base64', async (req, res) => {
       });
     }
     
-    console.log('✅ Base64 payment uploaded successfully');
+    console.log('✅ Base64 payment uploaded successfully - Status: pending_verification');
     
     res.json({
       success: true,
-      message: 'Payment proof uploaded successfully',
+      message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
       fileName: `base64-${Date.now()}-${payment_filename}`,
       booking_reference: booking_reference
     });
@@ -1101,6 +1118,7 @@ router.post('/update-payment-base64', async (req, res) => {
     if (connection) connection.release();
   }
 });
+
 // ✅ PERBAIKI BUNDLE ORDER UPLOAD - NO FILESYSTEM
 router.post('/bundle-order/upload-payment', upload.single('payment_proof'), async (req, res) => {
   let connection;
