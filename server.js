@@ -294,25 +294,52 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
 
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    // Ambil connection dari pool
     const connection = await pool.promise().getConnection();
+
+    // Query semua bookings
     const [bookings] = await connection.execute(`
-      SELECT id, booking_reference, customer_name, customer_email, customer_phone,
-             movie_title, total_amount, seat_numbers, status, payment_proof,
-             payment_filename, payment_base64 IS NOT NULL as has_payment_image,
-             verified_at, verified_by, admin_notes,
-             DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date
+      SELECT 
+        id,
+        booking_reference,
+        customer_name,
+        customer_email,
+        customer_phone,
+        movie_title,
+        total_amount,
+        seat_numbers,
+        status,
+        payment_proof,
+        payment_filename,
+        payment_base64 IS NOT NULL AS has_payment_image,
+        verified_at,
+        verified_by,
+        admin_notes,
+        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS booking_date
       FROM bookings
       ORDER BY booking_date DESC
     `);
+
     connection.release();
 
-    // pastikan seat_numbers selalu jadi array
-    const formatted = bookings.map(b => ({
-      ...b,
-      seat_numbers: typeof b.seat_numbers === 'string' ? JSON.parse(b.seat_numbers || '[]') : b.seat_numbers
-    }));
+    // Pastikan seat_numbers selalu array
+    const formattedBookings = bookings.map(b => {
+      let seats = [];
+      if (typeof b.seat_numbers === 'string') {
+        try {
+          seats = JSON.parse(b.seat_numbers);
+          if (!Array.isArray(seats)) seats = [seats];
+        } catch {
+          seats = b.seat_numbers.split(',').map(s => s.trim());
+        }
+      } else if (Array.isArray(b.seat_numbers)) {
+        seats = b.seat_numbers;
+      }
+      return { ...b, seat_numbers: seats };
+    });
 
-    res.json({ success: true, data: formatted });
+    res.json({ success: true, data: formattedBookings });
+
   } catch (error) {
     console.error('❌ Admin all bookings error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
