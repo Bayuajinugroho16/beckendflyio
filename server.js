@@ -537,6 +537,36 @@ app.post('/api/auth/create-admin', async (req, res) => {
   } catch (error) { console.error('Create admin error:', error); res.status(500).json({ success: false, message: error.message }); }
 });
 
+// server.js atau routes/bundle.js
+app.post('/api/bundle/create-order', async (req, res) => {
+  const { bundle_name, quantity, customer_name } = req.body;
+  
+  if (!bundle_name || !quantity || !customer_name) {
+    return res.status(400).json({ success: false, message: 'Missing fields' });
+  }
+
+  try {
+    const connection = await pool.promise().getConnection();
+    const order_reference = 'BO' + Date.now() + Math.random().toString(36).substr(2,5).toUpperCase();
+    
+    const [result] = await connection.execute(
+      'INSERT INTO bundle_orders (bundle_name, quantity, customer_name, order_reference, status) VALUES (?, ?, ?, ?, ?)',
+      [bundle_name, quantity, customer_name, order_reference, 'pending']
+    );
+    
+    connection.release();
+
+    res.status(201).json({
+      success: true,
+      message: 'Bundle order created',
+      data: { id: result.insertId, order_reference, bundle_name, quantity, customer_name, status: 'pending' }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
 // ==================== BASIC ROUTES ====================
 app.get('/api/test', (req, res) => res.json({ success: true, message: 'Server is working!', timestamp: new Date().toISOString() }));
 app.get('/', (req, res) => res.json({ message: 'Admin Verification Server Running!', status: 'OK', features: ['Payment Verification System', 'Admin Dashboard', 'Supabase Storage'] }));
