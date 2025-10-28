@@ -643,6 +643,40 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
   }
 });
 
+// ✅ GET Booking by Reference
+router.get('/bookings/:booking_reference', async (req, res) => {
+  const { booking_reference } = req.params;
+  let connection;
+
+  try {
+    connection = await pool.promise().getConnection();
+
+    const [rows] = await connection.execute(
+      'SELECT * FROM bookings WHERE booking_reference = ?',
+      [booking_reference]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        valid: false,
+        message: '❌ Data booking tidak ditemukan di database',
+      });
+    }
+
+    res.json({
+      valid: true,
+      message: '✅ Data booking ditemukan',
+      booking: rows[0],
+    });
+  } catch (error) {
+    console.error('❌ Error get booking by reference:', error);
+    res.status(500).json({ valid: false, message: error.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+
 // ✅ GET USER BOOKINGS (MY-BOOKINGS) - UPDATE STATUS MAPPING
 router.get('/my-bookings', async (req, res) => {
   let connection;
@@ -1056,7 +1090,7 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
     // ✅ GENERATE REFERENCE & CODE SAAT UPLOAD BUKTI BAYAR
     const new_booking_reference = bookingReference || 'TIX' + Date.now().toString().slice(-6) + Math.random().toString(36).substr(2, 3).toUpperCase();
     const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
-
+    
     const base64Image = req.file.buffer.toString('base64');
     const fileName = `payment-${Date.now()}-${req.file.originalname}`;
     
@@ -1102,12 +1136,11 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
         message: 'Booking not found or already processed'
       });
     }
-    
-    // Get updated booking data
+    const finalBookingRef = bookingReference || new_booking_reference;
     const [bookings] = await connection.execute(
-      'SELECT * FROM bookings WHERE booking_reference = ?',
-      [new_booking_reference]
-    );
+  'SELECT * FROM bookings WHERE booking_reference = ?',
+  [finalBookingRef]
+);
     
     const booking = bookings[0];
     
