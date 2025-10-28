@@ -9,22 +9,41 @@ import { pool } from './config/database.js';
 import fs from 'fs';
 import multer from 'multer';
 
-// ✅ MULTER CONFIG - MEMORY STORAGE ONLY
+
+
+const app = express();
+// ✅ MULTER CONFIG - SIMPAN KE server/public/bukti_pembayaran
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = './public/bukti_pembayaran'; // ✅ Relative ke server.js
+    // Pastikan folder exists
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    // Format: payment-{timestamp}-{random}.{ext}
+    const uniqueName = `payment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${file.originalname.split('.').pop()}`;
+    cb(null, uniqueName);
+  }
+});
+
 const upload = multer({ 
-  storage: multer.memoryStorage(),
+  storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: 5 * 1024 * 1024, // 5MB
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed'), false);
+      cb(new Error('Hanya file gambar yang diizinkan'), false);
     }
   }
 });
+app.use('/bukti_pembayaran', express.static('public/bukti_pembayaran'));
 
-const app = express();
 
 // ✅ INCREASE PAYLOAD LIMIT
 app.use(express.json({ limit: '50mb' }));
@@ -399,60 +418,76 @@ app.post('/api/update-payment-base64', async (req, res) => {
   }
 });
 
-// ✅ UPLOAD PAYMENT - MULTER VERSION
+// ✅ UPLOAD PAYMENT - SIMPAN KE LOCAL FOLDER
 app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res) => {
-  console.log('=== 🚀 UPLOAD PAYMENT (MULTER) ===');
+  console.log('=== 🚀 UPLOAD PAYMENT TO LOCAL FOLDER ===');
   
   if (!req.file || !req.body.booking_reference) {
     return res.status(400).json({ 
       success: false, 
-      message: 'File and booking reference required' 
+      message: 'File dan booking reference diperlukan' 
     });
   }
 
   let connection;
   try {
-    const base64Image = req.file.buffer.toString('base64');
-    const fileName = `payment-${Date.now()}-${req.file.originalname}`;
-    
-    console.log('📤 Uploading for booking:', req.body.booking_reference);
+    console.log('📁 File uploaded:', {
+      originalName: req.file.originalname,
+      fileName: req.file.filename,
+      path: req.file.path,
+      size: req.file.size
+    });
     
     connection = await pool.promise().getConnection();
 
-    // Update dengan status pending_verification
+    // ✅ SIMPAN PATH FILE KE DATABASE
     const [result] = await connection.execute(
       `UPDATE bookings SET 
-        payment_proof = ?, 
-        payment_filename = ?, 
-        payment_base64 = ?, 
-        payment_mimetype = ?,
+        payment_proof = ?,           
+        payment_filename = ?,       
+        payment_path = ?,             
         status = 'pending_verification', 
         payment_date = NOW()
       WHERE booking_reference = ?`,
-      [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
+      [
+        req.file.filename,           
+        req.file.originalname,       
+        req.file.path,               
+        req.body.booking_reference
+      ]
     );
     
     if (result.affectedRows === 0) {
+      // Hapus file jika booking tidak ditemukan
+      fs.unlinkSync(req.file.path);
       return res.status(404).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Booking tidak ditemukan'
       });
     }
     
-    console.log('✅ Upload successful (Base64), waiting verification');
+    console.log('✅ Upload successful - File saved to:', req.file.path);
     
     res.json({
       success: true,
-      message: 'Payment proof uploaded! Waiting for admin verification.',
-      fileName: fileName,
-      bookingReference: req.body.booking_reference
+      message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
+      data: {
+        fileName: req.file.filename,
+        filePath: req.file.path,
+        bookingReference: req.body.booking_reference,
+        status: 'pending_verification'
+      }
     });
     
   } catch (error) {
     console.error('❌ Upload error:', error);
+    // Hapus file jika error
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     res.status(500).json({ 
       success: false, 
-      message: 'Upload failed: ' + error.message
+      message: 'Upload gagal: ' + error.message
     });
   } finally {
     if (connection) connection.release();
