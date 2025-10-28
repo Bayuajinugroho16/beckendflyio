@@ -152,210 +152,91 @@ router.get('/occupied-seats', async (req, res) => {
 });
 
 
-// Di routes/bookings.js - endpoint POST /
 router.post('/', async (req, res) => {
   let connection;
   try {
-    const { showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title } = req.body;
-
-    console.log('📥 Creating booking with seat validation:', { 
-      showtime_id, movie_title, seat_numbers 
-    });
-
-    // ✅ VALIDASI: CEK SEAT_NUMBERS TIDAK BOLEH EMPTY
-    if (!showtime_id || !customer_name || !customer_email || !seat_numbers || !total_amount || !movie_title) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields'
-      });
-    }
-
-    // ✅ VALIDASI SEAT_NUMBERS
-    console.log('🔍 Validating seat_numbers:', {
-      seat_numbers: seat_numbers,
-      type: typeof seat_numbers,
-      isArray: Array.isArray(seat_numbers),
-      length: Array.isArray(seat_numbers) ? seat_numbers.length : 'N/A'
-    });
-
-    if (Array.isArray(seat_numbers) && seat_numbers.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Pilih minimal 1 kursi sebelum melakukan booking'
-      });
-    }
-
-    if (typeof seat_numbers === 'string' && (seat_numbers === '[]' || seat_numbers === '')) {
-      return res.status(400).json({
-        success: false,
-        message: 'Data kursi tidak valid'
-      });
-    }
-
-    if (!seat_numbers || seat_numbers === null || seat_numbers === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'Data kursi harus diisi'
-      });
-    }
-
-    connection = await pool.promise().getConnection();
-
-    // ✅ VALIDASI: CEK KURSI MASIH AVAILABLE
-    const [occupiedSeatsResult] = await connection.execute(
-      `SELECT seat_numbers FROM bookings 
-       WHERE showtime_id = ? AND movie_title = ? 
-       AND status IN ('pending', 'pending_verification', 'confirmed')`,
-      [showtime_id, movie_title]
-    );
-
-    // Kumpulkan semua kursi yang sudah dipesan
-    const occupiedSeats = new Set();
-    occupiedSeatsResult.forEach(booking => {
-      try {
-        let seats;
-        if (typeof booking.seat_numbers === 'string') {
-          try {
-            seats = JSON.parse(booking.seat_numbers);
-          } catch (e) {
-            seats = booking.seat_numbers.split(',').map(seat => seat.trim());
-          }
-        } else {
-          seats = booking.seat_numbers;
-        }
-
-        if (Array.isArray(seats)) {
-          seats.forEach(seat => {
-            if (seat && seat.trim() !== '') {
-              occupiedSeats.add(seat.trim());
-            }
-          });
-        }
-      } catch (error) {
-        console.error('Error processing occupied seats:', error);
-      }
-    });
-
-    console.log('🎯 Occupied seats:', Array.from(occupiedSeats));
-
-    // ✅ CEK KONFLIK KURSI
-    let seatsToBook;
-    if (Array.isArray(seat_numbers)) {
-      seatsToBook = seat_numbers.map(seat => seat.trim()).filter(seat => seat !== '');
-    } else {
-      seatsToBook = [String(seat_numbers).trim()];
-    }
-
-    const conflictingSeats = seatsToBook.filter(seat => occupiedSeats.has(seat));
-    
-    if (conflictingSeats.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Kursi ${conflictingSeats.join(', ')} sudah dipesan. Silakan pilih kursi lain.`,
-        conflicting_seats: conflictingSeats,
-        available_seats: Array.from(occupiedSeats)
-      });
-    }
-
-    console.log('✅ Seats available, proceeding with booking...');
-
-    // ✅ PASTIKAN SEAT_NUMBERS VALID SEBELUM DISIMPAN
-    let seatNumbersToSave;
-    
-    if (Array.isArray(seat_numbers)) {
-      // Filter out empty values
-      const validSeats = seat_numbers.filter(seat => 
-        seat !== null && 
-        seat !== undefined && 
-        seat !== '' &&
-        String(seat).trim() !== ''
-      );
-      
-      if (validSeats.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Tidak ada kursi valid yang dipilih'
-        });
-      }
-      
-      seatNumbersToSave = JSON.stringify(validSeats);
-      console.log('✅ Valid seats to save:', validSeats);
-    } else {
-      // Handle single seat
-      const seatStr = String(seat_numbers).trim();
-      if (seatStr === '' || seatStr === '[]') {
-        return res.status(400).json({
-          success: false,
-          message: 'Kursi tidak valid'
-        });
-      }
-      seatNumbersToSave = JSON.stringify([seatStr]);
-    }
-
-    // ✅ INSERT BOOKING KE DATABASE (TANPA REFERENCE & CODE)
-    const query = `
-      INSERT INTO bookings 
-      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-    `;
-
-    const [result] = await connection.execute(query, [
+    const {
       showtime_id,
       customer_name,
       customer_email,
-      customer_phone || null,
-      seatNumbersToSave, // ✅ GUNAKAN YANG SUDAH DIVALIDASI
+      customer_phone,
+      seat_numbers,
       total_amount,
-      movie_title,
-    ]);
+      movie_title
+    } = req.body;
+
+    // Validasi minimal
+    if (!customer_name || !customer_email || !movie_title || !total_amount) {
+      return res.status(400).json({
+        success: false,
+        message: 'customer_name, customer_email, movie_title, dan total_amount wajib diisi'
+      });
+    }
+
+    // Seat numbers: pastikan array JSON
+    let seatsToSave = [];
+    if (seat_numbers && Array.isArray(seat_numbers)) {
+      seatsToSave = seat_numbers.filter(s => s && s.trim() !== '');
+    }
+    const seatNumbersJson = JSON.stringify(seatsToSave);
+
+    connection = await pool.promise().getConnection();
+
+    // Insert booking
+    const [result] = await connection.execute(
+      `INSERT INTO bookings 
+      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        showtime_id || null,
+        customer_name,
+        customer_email,
+        customer_phone || null,
+        seatNumbersJson,
+        total_amount,
+        movie_title
+      ]
+    );
 
     const bookingId = result.insertId;
 
-    console.log('✅ Booking created with ID:', bookingId);
-    console.log('💾 Seat numbers saved:', seatNumbersToSave);
-    console.log('📝 Status: pending (waiting for payment)');
-
-    // Dapatkan data booking yang baru dibuat
-    const [newBookings] = await connection.execute(
+    // Ambil booking baru
+    const [rows] = await connection.execute(
       'SELECT * FROM bookings WHERE id = ?',
       [bookingId]
     );
 
-    const newBooking = newBookings[0];
+    const booking = rows[0];
 
     // Parse seat_numbers untuk response
-    let parsedSeatNumbers;
+    let parsedSeats = [];
     try {
-      parsedSeatNumbers = JSON.parse(newBooking.seat_numbers);
-      console.log('📤 Response seat_numbers:', parsedSeatNumbers);
-    } catch (error) {
-      parsedSeatNumbers = [newBooking.seat_numbers];
+      parsedSeats = JSON.parse(booking.seat_numbers);
+    } catch (e) {
+      parsedSeats = [];
     }
 
-    // Response sukses
     res.status(201).json({
       success: true,
-      message: 'Booking berhasil dibuat. Silakan lakukan pembayaran.',
+      message: 'Booking berhasil dibuat',
       data: {
-        id: newBooking.id,
-        status: newBooking.status,
-        customer_name: newBooking.customer_name,
-        customer_email: newBooking.customer_email,
-        customer_phone: newBooking.customer_phone,
-        total_amount: newBooking.total_amount,
-        seat_numbers: parsedSeatNumbers,
-        movie_title: newBooking.movie_title,
-        showtime_id: newBooking.showtime_id,
-        booking_date: newBooking.booking_date,
-        instructions: 'Silakan lanjutkan ke pembayaran untuk mendapatkan kode booking'
+        id: booking.id,
+        customer_name: booking.customer_name,
+        customer_email: booking.customer_email,
+        customer_phone: booking.customer_phone,
+        movie_title: booking.movie_title,
+        total_amount: booking.total_amount,
+        seat_numbers: parsedSeats,
+        status: booking.status,
+        booking_date: booking.booking_date
       }
     });
 
   } catch (error) {
-    console.error('❌ Booking creation error:', error);
+    console.error('❌ Error creating booking:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create booking: ' + error.message
+      message: error.message
     });
   } finally {
     if (connection) connection.release();
