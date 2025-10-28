@@ -6,7 +6,6 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from './config/database.js';
-import bundleRoutes from './routes/bundleRoutes.js';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
@@ -78,7 +77,7 @@ cron.schedule('*/5 * * * *', async () => {
       AND TIMESTAMPDIFF(MINUTE, uploaded_at, NOW()) > 10
   `);
 });
-app.use('/api/bundle', bundleRoutes);
+  
 
 // ==================== BOOKING ENDPOINTS ====================
 app.get('/api/bookings/occupied-seats', async (req, res) => {
