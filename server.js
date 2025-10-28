@@ -367,7 +367,7 @@ app.post('/api/update-payment-base64', async (req, res) => {
         payment_filename = ?,
         payment_base64 = ?,
         payment_mimetype = ?,
-        status = 'pending_verification',  // ✅ STATUS VERIFICATION
+        status = 'pending_verification', 
         payment_date = NOW()
       WHERE booking_reference = ?`,
       [payment_filename, payment_filename, payment_base64, payment_mimetype, booking_reference]
