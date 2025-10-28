@@ -426,7 +426,7 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
         payment_filename = ?, 
         payment_base64 = ?, 
         payment_mimetype = ?,
-        status = 'pending_verification',  // ✅ STATUS VERIFICATION
+        status = 'pending_verification', 
         payment_date = NOW()
       WHERE booking_reference = ?`,
       [fileName, req.file.originalname, base64Image, req.file.mimetype, req.body.booking_reference]
