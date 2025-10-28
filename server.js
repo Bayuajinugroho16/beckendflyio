@@ -286,19 +286,16 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
   }
 });
 
-// ==================== GET ALL BOOKINGS - ADMIN ====================
+// GET /api/admin/all-bookings
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
   let connection;
   try {
     connection = await pool.promise().getConnection();
 
-    // Ambil semua booking
     const [bookings] = await connection.execute(`
       SELECT 
-        id, 
-        showtime_id,
+        id,
         booking_reference,
-        verification_code,
         customer_name,
         customer_email,
         customer_phone,
@@ -317,33 +314,33 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
       ORDER BY booking_date DESC
     `);
 
-    // Release connection
     connection.release();
 
-    // Parse seat_numbers ke array
+    // SAFE parsing seat_numbers
     const formattedBookings = bookings.map(b => {
-      let seats;
-      try {
-        // Coba parse JSON
-        seats = JSON.parse(b.seat_numbers);
-        if (!Array.isArray(seats)) seats = [seats]; // fallback
-      } catch (err) {
-        // Kalau error parse, ubah string tunggal / angka jadi array
-        if (!b.seat_numbers) seats = [];
-        else seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers];
+      let seats = [];
+      if (b.seat_numbers) {
+        try {
+          const parsed = JSON.parse(b.seat_numbers);
+          seats = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          // fallback: jika JSON invalid, coba split string by comma
+          seats = typeof b.seat_numbers === 'string' 
+            ? b.seat_numbers.split(',').map(s => s.trim()).filter(Boolean) 
+            : [];
+        }
       }
-
       return {
         ...b,
-        seat_numbers: seats,
-        total_amount: Number(b.total_amount) || 0, // pastikan total_amount number
+        seat_numbers: seats
       };
     });
 
     res.json({ success: true, data: formattedBookings });
+
   } catch (error) {
-    console.error('❌ Admin all bookings error:', error);
     if (connection) connection.release();
+    console.error('❌ Admin all bookings error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
   }
 });
