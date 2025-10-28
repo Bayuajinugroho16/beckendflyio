@@ -644,7 +644,7 @@ router.get('/payment-image/:bookingReference', async (req, res) => {
 });
 
 // ✅ GET Booking by Reference
-router.get('/bookings/:booking_reference', async (req, res) => {
+router.get('/:booking_reference', async (req, res) => {
   const { booking_reference } = req.params;
   let connection;
 
