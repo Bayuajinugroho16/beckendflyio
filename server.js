@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from './config/database.js';
 import multer from 'multer';
-import * as authRoutes from './routes/auth.js';
+import authRoutes from './routes/auth.js';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import cron from 'node-cron';
