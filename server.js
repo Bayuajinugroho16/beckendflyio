@@ -538,7 +538,7 @@ app.post('/api/auth/create-admin', async (req, res) => {
 });
 
 // server.js atau routes/bundle.js
-app.post('/api/bundle/create-order', async (req, res) => {
+app.post('/bundle/create-order', async (req, res) => {
   const { bundle_name, quantity, customer_name } = req.body;
   
   if (!bundle_name || !quantity || !customer_name) {
