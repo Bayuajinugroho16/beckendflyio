@@ -8,11 +8,6 @@ import jwt from 'jsonwebtoken';
 import { pool } from './config/database.js';
 import fs from 'fs';
 import multer from 'multer';
-import bookingRoutes from './routes/bookings.js';
-
-
-
-app.use('/api/bookings', bookingRoutes);
 
 // ✅ MULTER CONFIG - MEMORY STORAGE ONLY
 const upload = multer({ 
@@ -85,38 +80,33 @@ const requireAdmin = (req, res, next) => {
 
 // ==================== BOOKING ENDPOINTS ====================
 
-// Di file server utama (index.js atau app.js), tambahkan endpoint ini:
-
-// ✅ OCCUPIED SEATS ENDPOINT - FIX 404 ERROR
-app.get('/api/bookings/occupied-seats', async (req, res) => {
+// ✅ OCCUPIED SEATS ENDPOINT
+app.get('/bookings/occupied-seats', async (req, res) => {
   let connection;
   try {
     const { showtime_id, movie_title } = req.query;
     
     console.log('🎯 Fetching occupied seats for:', { showtime_id, movie_title });
     
-    if (!showtime_id || !movie_title) {
+    if (!showtime_id) {
       return res.status(400).json({
         success: false,
-        message: 'Showtime ID and Movie Title are required'
+        message: 'Showtime ID is required'
       });
     }
 
     connection = await pool.promise().getConnection();
     
-    // Query untuk mendapatkan kursi yang sudah dipesan (confirmed + pending_verification)
     const [bookings] = await connection.execute(
       `SELECT seat_numbers FROM bookings 
-       WHERE showtime_id = ? AND movie_title = ? 
-       AND status IN ('confirmed', 'pending_verification')`,
-      [showtime_id, movie_title]
+       WHERE showtime_id = ? AND status IN ('confirmed', 'pending_verification')`,
+      [showtime_id]
     );
     
     connection.release();
 
     console.log(`✅ Found ${bookings.length} bookings for showtime ${showtime_id}`);
 
-    // Process seat numbers
     const occupiedSeats = new Set();
     
     bookings.forEach(booking => {
@@ -126,7 +116,6 @@ app.get('/api/bookings/occupied-seats', async (req, res) => {
           try {
             seats = JSON.parse(booking.seat_numbers);
           } catch (e) {
-            // Fallback: treat as comma-separated string
             seats = booking.seat_numbers.split(',').map(seat => seat.trim());
           }
         } else {
@@ -164,6 +153,7 @@ app.get('/api/bookings/occupied-seats', async (req, res) => {
     if (connection) connection.release();
   }
 });
+
 // ✅ CREATE BOOKING ENDPOINT
 app.post('/bookings', async (req, res) => {
   let connection;
