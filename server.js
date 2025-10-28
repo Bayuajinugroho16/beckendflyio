@@ -9,33 +9,23 @@ import { pool } from './config/database.js';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
-import bookingsRoutes from './routes/bookings.js';
 
 const app = express();
 
 // ==================== MIDDLEWARE ====================
-const allowedOrigins = [
-  'https://pleaseee-one.vercel.app',
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173'
-];
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
+// ✅ FIX CORS (pastikan ini DIATAS semua route)
+app.use(cors({
+  origin: [
+    process.env.FRONTEND_URL || 'https://pleaseee-one.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors()); // handle preflight for all routes
 
 // ✅ INCREASE PAYLOAD LIMIT
 app.use(express.json({ limit: '50mb' }));
@@ -56,10 +46,6 @@ const upload = multer({
     else cb(new Error('Hanya file gambar yang diizinkan'), false);
   }
 });
-
-// ==================== ROUTES ====================
-app.use('/api/bookings', bookingsRoutes);
-
 
 // ==================== AUTH MIDDLEWARE ====================
 const authenticateToken = (req, res, next) => {
