@@ -9,6 +9,7 @@ import { pool } from './config/database.js';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
+import bookingsRoutes from './routes/bookings.js';
 
 const app = express();
 
@@ -46,6 +47,10 @@ const upload = multer({
     else cb(new Error('Hanya file gambar yang diizinkan'), false);
   }
 });
+
+// ==================== ROUTES ====================
+app.use('/api/bookings', bookingsRoutes);
+
 
 // ==================== AUTH MIDDLEWARE ====================
 const authenticateToken = (req, res, next) => {

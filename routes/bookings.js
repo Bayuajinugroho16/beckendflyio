@@ -3,6 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import { pool } from '../config/database.js';
 
+app.use('/api/bookings', bookingsRoutes);
+
 const router = express.Router();
 
 // ✅ MULTER CONFIGURATION FOR MEMORY STORAGE (VERCEL COMPATIBLE)
