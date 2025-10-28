@@ -425,6 +425,22 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
   }
 });
 
+// di backend Node.js
+app.post("/api/bundle/upload-payment", async (req, res) => {
+  const { order_reference, paymentProofUrl } = req.body;
+
+  try {
+    await db.query(
+      "UPDATE bundle_orders SET payment_proof = ? WHERE order_reference = ?",
+      [paymentProofUrl, order_reference]
+    );
+
+    res.json({ success: true, message: "Bukti pembayaran berhasil diupload" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 
 
 

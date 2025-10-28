@@ -84,6 +84,49 @@ router.get('/', async (req, res) => {
   }
 });
 
+
+// ===== UPDATE STATUS BUNDLE ORDER (CONFIRM / REJECT) =====
+router.put('/bundle-orders/:order_reference/status', async (req, res) => {
+  const { order_reference } = req.params;
+  const { action, verified_by } = req.body; // action: 'confirm' | 'reject'
+
+  if (!['confirm', 'reject'].includes(action)) {
+    return res.status(400).json({ success: false, message: 'Invalid action' });
+  }
+
+  const newStatus = action === 'confirm' ? 'confirmed' : 'rejected';
+
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+
+    const [orders] = await connection.execute(
+      'SELECT * FROM bundle_orders WHERE order_reference = ?',
+      [order_reference]
+    );
+
+    if (orders.length === 0) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    await connection.execute(
+      'UPDATE bundle_orders SET status = ?, verified_by = ?, updated_at = NOW() WHERE order_reference = ?',
+      [newStatus, verified_by || 'admin', order_reference]
+    );
+
+    res.json({
+      success: true,
+      message: `Bundle order ${order_reference} berhasil di-${newStatus}.`,
+      status: newStatus
+    });
+
+  } catch (err) {
+    console.error('❌ Error updating bundle status:', err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
 // ✅ OCCUPIED SEATS ENDPOINT (HANYA CONFIRMED)
 router.get('/occupied-seats', async (req, res) => {
   let connection;
