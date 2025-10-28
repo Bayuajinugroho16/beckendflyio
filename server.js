@@ -293,57 +293,32 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
 });
 
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
-  let connection;
   try {
-    connection = await pool.promise().getConnection();
-
+    const connection = await pool.promise().getConnection();
     const [bookings] = await connection.execute(`
-      SELECT *
+      SELECT id, booking_reference, customer_name, customer_email, customer_phone,
+             movie_title, total_amount, seat_numbers, status, payment_proof,
+             payment_filename, payment_base64 IS NOT NULL as has_payment_image,
+             verified_at, verified_by, admin_notes,
+             DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date
       FROM bookings
       ORDER BY booking_date DESC
     `);
-
     connection.release();
 
-    const formatted = bookings.map(b => {
-      let seats = [];
-      if (b.seat_numbers) {
-        try { seats = JSON.parse(b.seat_numbers); }
-        catch { 
-          try { seats = b.seat_numbers.replace(/[^A-Z0-9,]/gi,'').split(',').filter(Boolean); }
-          catch { seats = []; }
-        }
-        if (!Array.isArray(seats)) seats = [seats];
-      }
-      return {
-        id: b.id,
-        booking_reference: b.booking_reference,
-        customer_name: b.customer_name || '',
-        customer_email: b.customer_email || '',
-        customer_phone: b.customer_phone || '',
-        movie_title: b.movie_title || '',
-        total_amount: b.total_amount || 0,
-        seat_numbers: seats,
-        status: b.status,
-        payment_proof: b.payment_proof || '',
-        payment_filename: b.payment_filename || '',
-        has_payment_image: !!b.payment_base64,
-        verified_at: b.verified_at,
-        verified_by: b.verified_by,
-        admin_notes: b.admin_notes || '',
-        booking_date: b.booking_date
-      };
-    });
+    // pastikan seat_numbers selalu jadi array
+    const formatted = bookings.map(b => ({
+      ...b,
+      seat_numbers: typeof b.seat_numbers === 'string' ? JSON.parse(b.seat_numbers || '[]') : b.seat_numbers
+    }));
 
-    console.log('🔹 Total bookings formatted:', formatted.length);
     res.json({ success: true, data: formatted });
-
-  } catch (err) {
-    if (connection) connection.release();
-    console.error('❌ /api/admin/all-bookings error:', err);
-    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + err.message });
+  } catch (error) {
+    console.error('❌ Admin all bookings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
   }
 });
+
 
 
 
