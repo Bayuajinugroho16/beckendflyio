@@ -77,7 +77,7 @@ cron.schedule('*/5 * * * *', async () => {
       AND TIMESTAMPDIFF(MINUTE, uploaded_at, NOW()) > 10
   `);
 });
-  
+
 
 // ==================== BOOKING ENDPOINTS ====================
 app.get('/api/bookings/occupied-seats', async (req, res) => {
@@ -254,18 +254,90 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
   }
 });
 
-// ==================== OTHER ADMIN & USER ENDPOINTS (kept unchanged) ====================
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.promise().getConnection();
-    const [bookings] = await connection.execute(`SELECT id, booking_reference, customer_name, customer_email, customer_phone, movie_title, total_amount, seat_numbers, status, payment_proof, payment_filename, payment_base64 IS NOT NULL as has_payment_image, verified_at, verified_by, admin_notes, DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date FROM bookings ORDER BY booking_date DESC`);
-    connection.release();
-    res.json({ success: true, data: bookings });
+    connection = await pool.promise().getConnection();
+
+    // Ambil query params
+    const { status, page = 1, limit = 20 } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = `SELECT 
+      id,
+      booking_reference,
+      customer_name,
+      customer_email,
+      customer_phone,
+      movie_title,
+      total_amount,
+      seat_numbers,
+      status,
+      payment_proof,
+      payment_filename,
+      COALESCE(payment_base64, '') as payment_base64,
+      verified_at,
+      verified_by,
+      admin_notes,
+      booking_date
+      FROM bookings`;
+
+    const params = [];
+    if (status) {
+      query += ` WHERE status = ?`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY booking_date DESC LIMIT ? OFFSET ?`;
+    params.push(parseInt(limit), parseInt(offset));
+
+    const [rows] = await connection.execute(query, params);
+
+    // Parsing seat_numbers & has_payment_image
+    const bookings = rows.map(booking => {
+      let seats = [];
+      try {
+        seats = typeof booking.seat_numbers === 'string' ? JSON.parse(booking.seat_numbers) : booking.seat_numbers;
+      } catch (err) {
+        seats = typeof booking.seat_numbers === 'string' ? booking.seat_numbers.split(',').map(s => s.trim()) : [];
+      }
+
+      return {
+        ...booking,
+        seat_numbers: seats,
+        has_payment_image: !!booking.payment_base64 || !!booking.payment_proof
+      };
+    });
+
+    // Total count untuk pagination
+    let totalCount = 0;
+    if (status) {
+      const [countRows] = await connection.execute(`SELECT COUNT(*) as count FROM bookings WHERE status = ?`, [status]);
+      totalCount = countRows[0].count;
+    } else {
+      const [countRows] = await connection.execute(`SELECT COUNT(*) as count FROM bookings`);
+      totalCount = countRows[0].count;
+    }
+
+    res.json({ 
+      success: true, 
+      data: bookings, 
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    });
+
   } catch (error) {
     console.error('❌ Admin all bookings error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
+
 
 app.put('/api/admin/bookings/:bookingReference/status', authenticateToken, requireAdmin, async (req, res) => {
   try {
