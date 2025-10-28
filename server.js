@@ -6,9 +6,13 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from './config/database.js';
+import bundleRoutes from './routes/bundleRoutes.js';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
+import cron from 'node-cron';
+
+
 
 const app = express();
 
@@ -64,6 +68,17 @@ const requireAdmin = (req, res, next) => {
   if (req.user?.role !== 'admin') return res.status(403).json({ success: false, message: 'Admin access required' });
   next();
 };
+
+cron.schedule('*/5 * * * *', async () => {
+  console.log('⏳ Checking expired waiting_verification bookings...');
+  await pool.promise().execute(`
+    UPDATE bookings
+    SET status = 'rejected'
+    WHERE status = 'waiting_verification'
+      AND TIMESTAMPDIFF(MINUTE, uploaded_at, NOW()) > 10
+  `);
+});
+app.use('/api/bundle', bundleRoutes);
 
 // ==================== BOOKING ENDPOINTS ====================
 app.get('/api/bookings/occupied-seats', async (req, res) => {

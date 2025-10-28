@@ -83,7 +83,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ✅ OCCUPIED SEATS ENDPOINT - UPDATE DENGAN pending_verification
+// ✅ OCCUPIED SEATS ENDPOINT (HANYA CONFIRMED)
 router.get('/occupied-seats', async (req, res) => {
   let connection;
   try {
@@ -94,59 +94,48 @@ router.get('/occupied-seats', async (req, res) => {
     if (!showtime_id || !movie_title) {
       return res.status(400).json({
         success: false,
-        message: 'Showtime ID and Movie Title are required'
+        message: 'Showtime ID dan Movie Title wajib diisi'
       });
     }
 
     connection = await pool.promise().getConnection();
 
-    // ✅ UPDATE: INCLUDE pending_verification SEATS
+    // 🎯 Hanya ambil kursi yang sudah dikonfirmasi admin
     const [bookings] = await connection.execute(
-      `SELECT seat_numbers FROM bookings 
-       WHERE showtime_id = ? AND movie_title = ? 
-       AND status IN ('confirmed', 'pending_verification')`,
+      `
+      SELECT seat_numbers 
+      FROM bookings 
+      WHERE showtime_id = ? 
+        AND movie_title = ? 
+        AND status = 'confirmed'
+      `,
       [showtime_id, movie_title]
     );
 
-    console.log(`✅ Found ${bookings.length} bookings for showtime ${showtime_id}`);
-
-    // Kumpulkan semua kursi yang sudah dipesan
     const occupiedSeats = new Set();
+
     bookings.forEach(booking => {
       try {
-        let seats;
-        if (typeof booking.seat_numbers === 'string') {
+        let seats = booking.seat_numbers;
+        if (typeof seats === 'string') {
           try {
-            seats = JSON.parse(booking.seat_numbers);
-          } catch (e) {
-            // Jika parsing gagal, anggap sebagai string biasa
-            seats = booking.seat_numbers.split(',').map(seat => seat.trim().replace(/[\[\]"]/g, ''));
+            seats = JSON.parse(seats);
+          } catch {
+            seats = seats.split(',').map(s => s.trim().replace(/[\[\]"]/g, ''));
           }
-        } else {
-          seats = booking.seat_numbers;
         }
 
-        // Pastikan seats adalah array
         if (Array.isArray(seats)) {
-          seats.forEach(seat => {
-            if (seat) {
-              occupiedSeats.add(seat);
-            }
-          });
-        } else {
-          console.error('❌ seat_numbers is not an array:', seats);
+          seats.forEach(seat => seat && occupiedSeats.add(seat));
         }
-      } catch (error) {
-        console.error('❌ Error processing seat_numbers:', error, booking);
+      } catch (err) {
+        console.error('❌ Error parsing seats:', err);
       }
     });
 
-    const occupiedSeatsArray = Array.from(occupiedSeats);
-    console.log(`✅ Occupied seats for showtime ${showtime_id}:`, occupiedSeatsArray);
-
     res.json({
       success: true,
-      data: occupiedSeatsArray
+      data: Array.from(occupiedSeats)
     });
 
   } catch (error) {
@@ -160,6 +149,7 @@ router.get('/occupied-seats', async (req, res) => {
     if (connection) connection.release();
   }
 });
+
 
 // Di routes/bookings.js - endpoint POST /
 router.post('/', async (req, res) => {
@@ -1065,6 +1055,76 @@ router.post('/bundle-order', async (req, res) => {
   }
 });
 
+// === Upload Bukti Pembayaran ===
+router.post('/upload-payment/:booking_reference', upload.single('file'), async (req, res) => {
+  const { booking_reference } = req.params;
+  const file = req.file;
+
+  try {
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'File tidak ditemukan' });
+    }
+
+    // Upload ke Supabase Storage
+    const fileName = `bukti-${booking_reference}-${Date.now()}.jpg`;
+    const { data, error } = await supabase.storage
+      .from('bukti-pembayaran')
+      .upload(fileName, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const fileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/bukti-pembayaran/${fileName}`;
+
+    // Update database
+    await pool.promise().execute(`
+      UPDATE bookings 
+      SET payment_url = ?, payment_filename = ?, payment_mimetype = ?, 
+          uploaded_at = NOW(), status = 'waiting_verification'
+      WHERE booking_reference = ?
+    `, [fileUrl, file.originalname, file.mimetype, booking_reference]);
+
+    res.json({
+      success: true,
+      message: '✅ Bukti pembayaran berhasil diupload. Silakan hubungi admin untuk verifikasi dalam 10 menit.',
+      payment_url: fileUrl,
+      status: 'waiting_verification'
+    });
+
+  } catch (error) {
+    console.error('❌ Error upload:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.put('/verify/:booking_reference', async (req, res) => {
+  const { booking_reference } = req.params;
+  const { verified_by, action } = req.body; // action: confirm | reject
+
+  try {
+    const status = action === 'confirm' ? 'confirmed' : 'rejected';
+
+    await pool.promise().execute(`
+      UPDATE bookings 
+      SET status = ?, verified_at = NOW(), verified_by = ?
+      WHERE booking_reference = ?
+    `, [status, verified_by, booking_reference]);
+
+    res.json({
+      success: true,
+      message: `Booking ${booking_reference} berhasil di-${status}.`,
+      status
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
 // Di routes/bookings.js - endpoint /upload-payment
 router.post('/upload-payment', upload.single('payment_proof'), async (req, res) => {
   let connection;
@@ -1185,197 +1245,9 @@ router.post('/upload-payment', upload.single('payment_proof'), async (req, res) 
   }
 });
 
-// ✅ ENDPOINT UNTUK BASE64 UPLOAD (COMPATIBILITY) - UPDATE STATUS
-router.post('/update-payment-base64', async (req, res) => {
-  let connection;
-  try {
-    console.log('=== 🚀 BASE64 PAYMENT UPLOAD ===');
-    
-    const { booking_reference, payment_base64, payment_filename, payment_mimetype } = req.body;
 
-    if (!booking_reference || !payment_base64) {
-      return res.status(400).json({
-        success: false,
-        message: 'Booking reference and payment base64 are required'
-      });
-    }
 
-    console.log('📤 Processing base64 payment for:', booking_reference);
-    
-    connection = await pool.promise().getConnection();
 
-    // ✅ SIMPAN BASE64 KE DATABASE DENGAN STATUS pending_verification
-    const [result] = await connection.execute(
-      `UPDATE bookings SET 
-        payment_proof = ?, 
-        payment_filename = ?, 
-        payment_base64 = ?, 
-        payment_mimetype = ?,
-        status = 'pending_verification',  // ✅ UPDATE STATUS
-        payment_date = NOW()
-      WHERE booking_reference = ?`,
-      [
-        `base64-${Date.now()}-${payment_filename}`,
-        payment_filename,
-        payment_base64,
-        payment_mimetype,
-        booking_reference
-      ]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Booking not found'
-      });
-    }
-    
-    console.log('✅ Base64 payment uploaded successfully - Status: pending_verification');
-    
-    res.json({
-      success: true,
-      message: 'Bukti pembayaran berhasil diupload! Menunggu verifikasi admin.',
-      fileName: `base64-${Date.now()}-${payment_filename}`,
-      booking_reference: booking_reference
-    });
-    
-  } catch (error) {
-    console.error('❌ Base64 upload error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Upload failed: ' + error.message
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-});
 
-// ✅ PERBAIKI BUNDLE ORDER UPLOAD - NO FILESYSTEM
-router.post('/bundle-order/upload-payment', upload.single('payment_proof'), async (req, res) => {
-  let connection;
-  try {
-    console.log('=== 🚀 BUNDLE ORDER UPLOAD (FIXED) ===');
-    
-    if (!req.file || !req.body.order_reference) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'File and order reference required' 
-      });
-    }
-
-    // ✅ VERIFIKASI MEMORY STORAGE
-    if (!req.file.buffer) {
-      return res.status(500).json({
-        success: false,
-        message: 'Server configuration error'
-      });
-    }
-
-    // ✅ BASE64 STORAGE UNTUK BUNDLE
-    const base64Image = req.file.buffer.toString('base64');
-    const fileName = `bundle-payment-${Date.now()}-${req.file.originalname}`;
-    
-    console.log('📦 Bundle order reference:', req.body.order_reference);
-    
-    connection = await pool.promise().getConnection();
-
-    // ✅ UPDATE bundle_orders table dengan base64
-    const [result] = await connection.execute(
-      `UPDATE bundle_orders SET 
-        payment_proof = ?,
-        payment_base64 = ?,
-        payment_mimetype = ?,
-        status = 'confirmed'
-       WHERE order_reference = ?`,
-      [fileName, base64Image, req.file.mimetype, req.body.order_reference]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bundle order not found'
-      });
-    }
-    
-    console.log('✅ Bundle order payment uploaded (Base64)');
-    
-    res.json({
-      success: true,
-      message: 'Bundle payment proof uploaded successfully',
-      fileName: fileName,
-      orderReference: req.body.order_reference
-    });
-    
-  } catch (error) {
-    console.error('❌ Bundle upload error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Upload failed: ' + error.message
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-});
-
-// ✅ GET BUNDLE ORDERS BY USERNAME
-router.get('/bundle-orders', async (req, res) => {
-  let connection;
-  try {
-    const username = req.query.username;
-    
-    console.log('👤 Fetching bundle orders for user:', username);
-    
-    if (!username) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username is required',
-        data: []
-      });
-    }
-    
-    connection = await pool.promise().getConnection();
-    
-    const [orders] = await connection.execute(
-      `SELECT 
-        id,
-        order_reference as booking_reference,
-        '' as verification_code,
-        customer_name,
-        customer_email,
-        customer_phone,
-        total_price as total_amount,
-        '[]' as seat_numbers,
-        status,
-        order_date as booking_date,
-        bundle_name as movie_title,
-        0 as showtime_id,
-        0 as is_verified,
-        NULL as verified_at,
-        NULL as qr_code_data,
-        'bundle' as order_type
-       FROM bundle_orders 
-       WHERE customer_name = ? OR customer_email = ?
-       ORDER BY order_date DESC`,
-      [username, username]
-    );
-
-    console.log(`✅ Found ${orders.length} bundle orders for user: ${username}`);
-    
-    res.json({
-      success: true,
-      data: orders
-    });
-
-  } catch (error) {
-    console.error('❌ Error fetching bundle orders:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch bundle orders: ' + error.message,
-      data: []
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-});
 
 module.exports = router;
