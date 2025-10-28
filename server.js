@@ -221,134 +221,160 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
   }
 });
 
-// ==================== ADMIN VERIFICATION ENDPOINTS (kept) ====================
+// 2️⃣ GET PENDING VERIFICATIONS
 app.get('/api/admin/pending-verifications', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.promise().getConnection();
-    const [verifications] = await connection.execute(`SELECT b.id, b.booking_reference, b.movie_title, b.showtime, b.seat_numbers, b.total_amount, b.payment_proof, b.payment_base64, b.status, b.created_at, b.verified_at, b.verified_by, u.name as customer_name, u.email as customer_email, u.phone as customer_phone FROM bookings b LEFT JOIN users u ON b.user_id = u.id WHERE b.status = 'pending_verification' ORDER BY b.created_at ASC`);
+    connection = await pool.promise().getConnection();
+    const [bookings] = await connection.execute(`
+      SELECT 
+        id, showtime_id, booking_reference, verification_code,
+        customer_name, customer_email, customer_phone,
+        movie_title, total_amount, seat_numbers, status,
+        payment_proof, payment_filename, payment_base64 IS NOT NULL as has_payment_image,
+        created_at, verified_at, verified_by, admin_notes
+      FROM bookings
+      WHERE status = 'pending_verification'
+      ORDER BY created_at ASC
+    `);
     connection.release();
-    const formattedVerifications = verifications.map(booking => ({ ...booking, has_payment_proof: !!(booking.payment_proof || booking.payment_base64), seat_numbers: typeof booking.seat_numbers === 'string' ? JSON.parse(booking.seat_numbers) : booking.seat_numbers }));
-    res.json({ success: true, data: formattedVerifications });
+
+    const formattedBookings = bookings.map(b => {
+      let seats;
+      try { seats = JSON.parse(b.seat_numbers); if (!Array.isArray(seats)) seats = [seats]; }
+      catch { seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; }
+      return { ...b, seat_numbers: seats, total_amount: Number(b.total_amount) || 0 };
+    });
+
+    res.json({ success: true, data: formattedBookings });
   } catch (error) {
     console.error('❌ Pending verifications error:', error);
+    if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch pending verifications: ' + error.message });
   }
 });
 
+
+// 3️⃣ VERIFY PAYMENT
 app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (req, res) => {
+  const { booking_reference, action, admin_notes } = req.body;
+  if (!booking_reference || !action) return res.status(400).json({ success: false, message: 'Booking reference and action required' });
+  if (!['approve','reject'].includes(action)) return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'" });
+
+  let connection;
   try {
-    const { booking_reference, action, admin_notes } = req.body;
-    if (!booking_reference || !action) return res.status(400).json({ success: false, message: 'Booking reference and action required' });
-    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'" });
-    const connection = await pool.promise().getConnection();
+    connection = await pool.promise().getConnection();
     const newStatus = action === 'approve' ? 'confirmed' : 'payment_rejected';
     const verifiedBy = req.user.username || 'admin';
-    const [result] = await connection.execute(`UPDATE bookings SET status = ?, verified_at = NOW(), verified_by = ?, admin_notes = ? WHERE booking_reference = ?`, [newStatus, verifiedBy, admin_notes || '', booking_reference]);
+
+    const [result] = await connection.execute(`
+      UPDATE bookings 
+      SET status = ?, verified_at = NOW(), verified_by = ?, admin_notes = ?
+      WHERE booking_reference = ?
+    `, [newStatus, verifiedBy, admin_notes || '', booking_reference]);
+
     if (result.affectedRows === 0) { connection.release(); return res.status(404).json({ success: false, message: 'Booking not found' }); }
+
     const [updatedBookings] = await connection.execute('SELECT * FROM bookings WHERE booking_reference = ?', [booking_reference]);
     connection.release();
+
     res.json({ success: true, message: `Payment ${action === 'approve' ? 'approved' : 'rejected'} successfully`, data: updatedBookings[0] });
   } catch (error) {
     console.error('❌ Verify payment error:', error);
+    if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Verification failed: ' + error.message });
   }
 });
 
+// ==================== GET ALL BOOKINGS - ADMIN ====================
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
   let connection;
   try {
     connection = await pool.promise().getConnection();
 
-    // Ambil query params
-    const { status, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    // Ambil semua booking
+    const [bookings] = await connection.execute(`
+      SELECT 
+        id, 
+        showtime_id,
+        booking_reference,
+        verification_code,
+        customer_name,
+        customer_email,
+        customer_phone,
+        movie_title,
+        total_amount,
+        seat_numbers,
+        status,
+        payment_proof,
+        payment_filename,
+        payment_base64 IS NOT NULL as has_payment_image,
+        verified_at,
+        verified_by,
+        admin_notes,
+        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date
+      FROM bookings
+      ORDER BY booking_date DESC
+    `);
 
-    let query = `SELECT 
-      id,
-      booking_reference,
-      customer_name,
-      customer_email,
-      customer_phone,
-      movie_title,
-      total_amount,
-      seat_numbers,
-      status,
-      payment_proof,
-      payment_filename,
-      COALESCE(payment_base64, '') as payment_base64,
-      verified_at,
-      verified_by,
-      admin_notes,
-      booking_date
-      FROM bookings`;
+    // Release connection
+    connection.release();
 
-    const params = [];
-    if (status) {
-      query += ` WHERE status = ?`;
-      params.push(status);
-    }
-
-    query += ` ORDER BY booking_date DESC LIMIT ? OFFSET ?`;
-    params.push(parseInt(limit), parseInt(offset));
-
-    const [rows] = await connection.execute(query, params);
-
-    // Parsing seat_numbers & has_payment_image
-    const bookings = rows.map(booking => {
-      let seats = [];
+    // Parse seat_numbers ke array
+    const formattedBookings = bookings.map(b => {
+      let seats;
       try {
-        seats = typeof booking.seat_numbers === 'string' ? JSON.parse(booking.seat_numbers) : booking.seat_numbers;
+        // Coba parse JSON
+        seats = JSON.parse(b.seat_numbers);
+        if (!Array.isArray(seats)) seats = [seats]; // fallback
       } catch (err) {
-        seats = typeof booking.seat_numbers === 'string' ? booking.seat_numbers.split(',').map(s => s.trim()) : [];
+        // Kalau error parse, ubah string tunggal / angka jadi array
+        if (!b.seat_numbers) seats = [];
+        else seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers];
       }
 
       return {
-        ...booking,
+        ...b,
         seat_numbers: seats,
-        has_payment_image: !!booking.payment_base64 || !!booking.payment_proof
+        total_amount: Number(b.total_amount) || 0, // pastikan total_amount number
       };
     });
 
-    // Total count untuk pagination
-    let totalCount = 0;
-    if (status) {
-      const [countRows] = await connection.execute(`SELECT COUNT(*) as count FROM bookings WHERE status = ?`, [status]);
-      totalCount = countRows[0].count;
-    } else {
-      const [countRows] = await connection.execute(`SELECT COUNT(*) as count FROM bookings`);
-      totalCount = countRows[0].count;
-    }
-
-    res.json({ 
-      success: true, 
-      data: bookings, 
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
-    });
-
+    res.json({ success: true, data: formattedBookings });
   } catch (error) {
     console.error('❌ Admin all bookings error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
-  } finally {
     if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
   }
 });
 
 
+
+// 4️⃣ UPDATE STATUS MANUAL
 app.put('/api/admin/bookings/:bookingReference/status', authenticateToken, requireAdmin, async (req, res) => {
+  const { bookingReference } = req.params;
+  const { status } = req.body;
+  if (!status) return res.status(400).json({ success: false, message: 'Status required' });
+
+  let connection;
   try {
-    const { bookingReference } = req.params; const { status } = req.body;
-    const connection = await pool.promise().getConnection();
-    const [result] = await connection.execute(`UPDATE bookings SET status = ?, verified_at = ?, verified_by = ? WHERE booking_reference = ?`, [status, status === 'confirmed' ? new Date() : null, status === 'confirmed' ? req.user.username : null, bookingReference]);
+    connection = await pool.promise().getConnection();
+    const verifiedAt = status === 'confirmed' ? new Date() : null;
+    const verifiedBy = status === 'confirmed' ? req.user.username : null;
+
+    const [result] = await connection.execute(`
+      UPDATE bookings 
+      SET status = ?, verified_at = ?, verified_by = ?
+      WHERE booking_reference = ?
+    `, [status, verifiedAt, verifiedBy, bookingReference]);
+
     connection.release();
     if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Booking not found' });
+
     res.json({ success: true, message: `Booking status updated to ${status}`, data: { booking_reference: bookingReference, status } });
   } catch (error) {
     console.error('❌ Update status error:', error);
+    if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to update status: ' + error.message });
   }
 });
