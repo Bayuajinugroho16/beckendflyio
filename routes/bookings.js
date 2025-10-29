@@ -127,6 +127,18 @@ router.put('/bundle-orders/:order_reference/status', async (req, res) => {
     if (connection) connection.release();
   }
 });
+
+function parseSeatNumbers(seatNumbers) {
+  if (!seatNumbers) return [];
+  if (Array.isArray(seatNumbers)) return seatNumbers;
+  try {
+    const parsed = JSON.parse(seatNumbers);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.log('Error parsing seat_numbers:', error);
+    return [];
+  }
+}
 router.get('/occupied-seats', async (req, res) => {
   let connection;
   try {
