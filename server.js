@@ -591,34 +591,66 @@ app.post('/api/auth/create-admin', async (req, res) => {
   } catch (error) { console.error('Create admin error:', error); res.status(500).json({ success: false, message: error.message }); }
 });
 
-app.post('/api/bundle/create-order', async (req, res) => {
-  const { bundle_name, quantity, customer_name } = req.body;
-  console.log('📦 Incoming bundle order:', req.body);
+app.post("/api/bundle/create-order", async (req, res) => {
+  const {
+    bundle_id,
+    bundle_name,
+    bundle_description,
+    bundle_price,
+    original_price,
+    savings,
+    quantity,
+    total_price,
+    customer_name,
+    customer_phone,
+    customer_email,
+    status = "pending",
+  } = req.body;
 
-  if (!bundle_name || !quantity || !customer_name) {
-    console.warn('⚠️ Missing fields in create-order:', req.body);
-    return res.status(400).json({ success: false, message: 'Missing fields' });
+  console.log("📦 Incoming bundle order:", req.body);
+
+  if (!bundle_id || !bundle_name || !customer_name) {
+    return res.status(400).json({ success: false, message: "Missing required fields" });
   }
 
   try {
     const connection = await pool.promise().getConnection();
-    console.log('✅ DB connected for bundle order');
+    console.log("✅ DB connected for bundle order");
 
-    const order_reference = 'BO' + Date.now() + Math.random().toString(36).substr(2,5).toUpperCase();
+    const order_reference = `BUNDLE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
     const [result] = await connection.execute(
-      'INSERT INTO bundle_orders (bundle_name, quantity, customer_name, order_reference, status) VALUES (?, ?, ?, ?, ?)',
-      [bundle_name, quantity, customer_name, order_reference, 'pending']
+      `INSERT INTO bundle_orders 
+      (order_reference, bundle_id, bundle_name, bundle_description, bundle_price, original_price, savings, quantity, total_price, customer_name, customer_phone, customer_email, status, order_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+      [
+        order_reference,
+        bundle_id,
+        bundle_name,
+        bundle_description,
+        bundle_price,
+        original_price,
+        savings,
+        quantity,
+        total_price,
+        customer_name,
+        customer_phone,
+        customer_email,
+        status,
+      ]
     );
+
     connection.release();
 
-    console.log('🎉 Bundle order created:', { order_reference });
+    console.log("🎉 Bundle order created:", { order_reference });
+
     res.status(201).json({
       success: true,
-      message: 'Bundle order created',
-      data: { id: result.insertId, order_reference, bundle_name, quantity, customer_name, status: 'pending' }
+      message: "Bundle order created successfully",
+      data: { id: result.insertId, order_reference, status },
     });
   } catch (error) {
-    console.error('❌ Error creating bundle order:', error);
+    console.error("❌ Error creating bundle order:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
