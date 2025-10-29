@@ -461,7 +461,6 @@ app.post("/api/bundle/upload-payment", async (req, res) => {
   }
 });
 
-// gabungkan bookings + bundle_orders
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const connection = await pool.promise().getConnection();
@@ -476,21 +475,33 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
       ORDER BY booking_date DESC
     `);
 
-    const [bundles] = await connection.execute(`
-      SELECT * FROM bundle_orders ORDER BY id DESC
-    `);
+    const [bundles] = await connection.execute(`SELECT * FROM bundle_orders ORDER BY id DESC`);
 
     connection.release();
 
-    res.json({
-      success: true,
-      data: { bookings, bundleOrders: bundles }
+    const formattedBookings = bookings.map(b => {
+      let seats;
+      try { seats = JSON.parse(b.seat_numbers); if (!Array.isArray(seats)) seats = [seats]; }
+      catch { seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; }
+      return { ...b, seat_numbers: seats, total_amount: Number(b.total_amount) || 0 };
     });
+
+    const formattedBundles = bundles.map(b => ({
+      ...b,
+      total_amount: Number(b.total_amount || b.quantity) || 0,
+      seat_numbers: [], // bundle tidak punya seat
+      has_payment_image: !!b.payment_proof,
+      booking_date: b.created_at
+    }));
+
+    res.json({ success: true, data: { bookings: formattedBookings, bundleOrders: formattedBundles } });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
 
 
 
