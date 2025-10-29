@@ -87,19 +87,19 @@ cron.schedule('*/5 * * * *', async () => {
 
 
 
-// ==================== BOOKING ENDPOINTS ====================
 app.get('/api/bookings/occupied-seats', async (req, res) => {
   let connection;
   try {
     const { showtime_id, movie_title } = req.query;
-    if (!showtime_id) return res.status(400).json({ success: false, message: 'Showtime ID is required' });
+    if (!showtime_id || !movie_title) 
+      return res.status(400).json({ success: false, message: 'Showtime ID & Movie Title required' });
 
     connection = await pool.promise().getConnection();
+
     const [bookings] = await connection.execute(
-      `SELECT seat_numbers FROM bookings WHERE showtime_id = ? AND movie_title = ? AND status IN ('confirmed','pending_verification')`,
+      `SELECT seat_numbers FROM bookings WHERE showtime_id = ? AND movie_title = ? AND status = 'confirmed'`,
       [showtime_id, movie_title]
     );
-    connection.release();
 
     const occupiedSeats = new Set();
     bookings.forEach(booking => {
@@ -107,8 +107,9 @@ app.get('/api/bookings/occupied-seats', async (req, res) => {
         let seats;
         if (typeof booking.seat_numbers === 'string') {
           try { seats = JSON.parse(booking.seat_numbers); }
-          catch (e) { seats = booking.seat_numbers.split(',').map(s => s.trim()); }
+          catch { seats = booking.seat_numbers.split(',').map(s => s.trim()); }
         } else seats = booking.seat_numbers;
+
         if (Array.isArray(seats)) seats.forEach(s => s && occupiedSeats.add(s.trim()));
       } catch (err) { console.error('Error processing seat numbers:', err); }
     });
@@ -116,10 +117,11 @@ app.get('/api/bookings/occupied-seats', async (req, res) => {
     res.json({ success: true, data: Array.from(occupiedSeats) });
   } catch (error) {
     console.error('❌ Error in occupied-seats:', error);
-    res.status(500).json({ success: false, message: 'Server error: ' + error.message, data: [] });
+    res.status(500).json({ success: false, message: error.message, data: [] });
+  } finally {
+    if(connection) connection.release();
   }
 });
-
 // ==================== CREATE BOOKING ====================
 app.post('/api/bookings', async (req, res) => {
   let connection;
