@@ -373,16 +373,17 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
   }
 });
 
-app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
+// ==================== ADMIN: ALL ORDERS (BOOKINGS + BUNDLE) ====================
+app.get('/api/admin/all-orders', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    // Ambil connection dari pool
     const connection = await pool.promise().getConnection();
 
-    // Query semua bookings
+    // 1️⃣ Ambil semua bookings
     const [bookings] = await connection.execute(`
       SELECT 
+        'booking' AS type,
         id,
-        booking_reference,
+        booking_reference AS reference,
         customer_name,
         customer_email,
         customer_phone,
@@ -396,34 +397,51 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
         verified_at,
         verified_by,
         admin_notes,
-        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS booking_date
+        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS date
       FROM bookings
       ORDER BY booking_date DESC
     `);
 
+    const formattedBookings = bookings.map(b => ({
+      ...b,
+      seat_numbers: parseSeats(b.seat_numbers),
+      total_amount: Number(b.total_amount) || 0
+    }));
+
+    // 2️⃣ Ambil semua bundle orders
+    const [bundles] = await connection.execute(`
+      SELECT 
+        'bundle' AS type,
+        id,
+        order_reference AS reference,
+        customer_name,
+        NULL AS customer_email,
+        NULL AS customer_phone,
+        bundle_name AS movie_title,
+        quantity AS total_amount,
+        NULL AS seat_numbers,
+        status,
+        payment_proof,
+        NULL AS payment_filename,
+        NULL AS has_payment_image,
+        NULL AS verified_at,
+        NULL AS verified_by,
+        NULL AS admin_notes,
+        DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS date
+      FROM bundle_orders
+      ORDER BY created_at DESC
+    `);
+
     connection.release();
 
-    // Pastikan seat_numbers selalu array
-    const formattedBookings = bookings.map(b => {
-      let seats = [];
-      if (typeof b.seat_numbers === 'string') {
-        try {
-          seats = JSON.parse(b.seat_numbers);
-          if (!Array.isArray(seats)) seats = [seats];
-        } catch {
-          seats = b.seat_numbers.split(',').map(s => s.trim());
-        }
-      } else if (Array.isArray(b.seat_numbers)) {
-        seats = b.seat_numbers;
-      }
-      return { ...b, seat_numbers: seats };
-    });
+    // 3️⃣ Gabungkan bookings + bundles
+    const allOrders = [...formattedBookings, ...bundles].sort((a,b)=>new Date(b.date) - new Date(a.date));
 
-    res.json({ success: true, data: formattedBookings });
+    res.json({ success: true, data: allOrders });
 
   } catch (error) {
-    console.error('❌ Admin all bookings error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
+    console.error('❌ Admin all orders error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch all orders: ' + error.message });
   }
 });
 
@@ -538,7 +556,7 @@ app.post('/api/auth/create-admin', async (req, res) => {
 });
 
 // server.js atau routes/bundle.js
-app.post('/bundle/create-order', async (req, res) => {
+app.post('/api/bundle/create-order', async (req, res) => {
   const { bundle_name, quantity, customer_name } = req.body;
   
   if (!bundle_name || !quantity || !customer_name) {
@@ -566,6 +584,16 @@ app.post('/bundle/create-order', async (req, res) => {
   }
 });
 
+app.get('/api/admin/bundle-orders', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const connection = await pool.promise().getConnection();
+    const [orders] = await connection.execute('SELECT * FROM bundle_orders ORDER BY id DESC');
+    connection.release();
+    res.json({ success: true, data: orders });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 // ==================== BASIC ROUTES ====================
 app.get('/api/test', (req, res) => res.json({ success: true, message: 'Server is working!', timestamp: new Date().toISOString() }));
