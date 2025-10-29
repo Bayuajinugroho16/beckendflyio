@@ -594,7 +594,6 @@ router.get('/:booking_reference', async (req, res) => {
 });
 
 
-// ✅ GET USER BOOKINGS (MY-BOOKINGS) - UPDATE STATUS MAPPING
 router.get('/my-bookings', async (req, res) => {
   let connection;
   try {
@@ -617,7 +616,9 @@ router.get('/my-bookings', async (req, res) => {
         id, booking_reference, verification_code, customer_name,
         customer_email, customer_phone, total_amount, seat_numbers,
         status, booking_date, movie_title, showtime_id, is_verified,
-        verified_at, qr_code_data, 'regular' as order_type
+        verified_at, qr_code_data,
+        payment_base64, payment_url, payment_filename, payment_mimetype,
+        'regular' as order_type
       FROM bookings 
       WHERE (LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?))
         AND booking_reference NOT LIKE 'BUNDLE-%'
@@ -630,13 +631,12 @@ router.get('/my-bookings', async (req, res) => {
         customer_name, customer_email, customer_phone, total_price as total_amount,
         '[]' as seat_numbers, status, order_date as booking_date,
         bundle_name as movie_title, 0 as showtime_id, 0 as is_verified,
-        NULL as verified_at, NULL as qr_code_data, 'bundle' as order_type
+        NULL as verified_at, NULL as qr_code_data, 'bundle' as order_type,
+        payment_proof
       FROM bundle_orders 
       WHERE LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?)
       ORDER BY order_date DESC
     `;
-    
-    console.log('🔍 Executing queries for username:', username);
     
     const [regularBookings] = await connection.execute(regularBookingsQuery, [username, username]);
     const [bundleOrders] = await connection.execute(bundleOrdersQuery, [username, username]);
@@ -646,10 +646,8 @@ router.get('/my-bookings', async (req, res) => {
     
     const allOrders = [...regularBookings, ...bundleOrders];
     
-    // ✅ PROCESS SEAT NUMBERS & UPDATE STATUS MAPPING
     const parsedBookings = allOrders.map(booking => {
       let seatNumbers = [];
-      
       if (booking.order_type === 'regular') {
         try {
           if (Array.isArray(booking.seat_numbers)) {
@@ -665,8 +663,7 @@ router.get('/my-bookings', async (req, res) => {
           seatNumbers = [];
         }
       }
-      
-      // Map showtime
+
       const showtimeMap = {
         1: '18:00 - Studio 1',
         2: '20:30 - Studio 1', 
@@ -677,7 +674,6 @@ router.get('/my-bookings', async (req, res) => {
         7: '19:00 - Studio 2'
       };
 
-      // ✅ UPDATE STATUS MAPPING DENGAN pending_verification
       const statusMap = {
         'pending': { text: 'Pending Payment', class: 'pending' },
         'pending_verification': { text: 'Menunggu Verifikasi', class: 'pending-verification' },
@@ -694,7 +690,17 @@ router.get('/my-bookings', async (req, res) => {
       } else {
         showtimeText = showtimeMap[booking.showtime_id] || `Showtime ${booking.showtime_id}`;
       }
-      
+
+      // ✅ PAYMENT PROOF UNTUK REGULAR DAN BUNDLE
+      let paymentProof = null;
+      if (booking.order_type === 'regular') {
+        paymentProof = booking.payment_base64 
+          ? `data:${booking.payment_mimetype || 'image/jpeg'};base64,${booking.payment_base64}`
+          : booking.payment_url || null;
+      } else {
+        paymentProof = booking.payment_proof || null;
+      }
+
       return {
         id: booking.id,
         booking_reference: booking.booking_reference,
@@ -716,6 +722,7 @@ router.get('/my-bookings', async (req, res) => {
         qr_code_data: booking.qr_code_data,
         order_type: booking.order_type,
         is_bundle: booking.order_type === 'bundle',
+        payment_proof: paymentProof,
         formatted_booking_date: new Date(booking.booking_date).toLocaleDateString('id-ID', {
           weekday: 'long',
           year: 'numeric',

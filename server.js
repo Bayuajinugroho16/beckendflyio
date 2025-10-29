@@ -455,9 +455,11 @@ app.post("/api/bundle/upload-payment", async (req, res) => {
 });
 
 app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.promise().getConnection();
+    connection = await pool.promise().getConnection();
 
+    // Ambil semua bookings reguler
     const [bookings] = await connection.execute(`
       SELECT 
         id, booking_reference, customer_name, customer_email, customer_phone,
@@ -468,29 +470,48 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
       ORDER BY booking_date DESC
     `);
 
-    const [bundles] = await connection.execute(`SELECT * FROM bundle_orders ORDER BY id DESC`);
+    // Ambil semua bundle orders
+    const [bundles] = await connection.execute(`
+      SELECT * FROM bundle_orders ORDER BY id DESC
+    `);
 
     connection.release();
 
+    // Format bookings
     const formattedBookings = bookings.map(b => {
       let seats;
-      try { seats = JSON.parse(b.seat_numbers); if (!Array.isArray(seats)) seats = [seats]; }
-      catch { seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; }
-      return { ...b, seat_numbers: seats, total_amount: Number(b.total_amount) || 0 };
+      try { 
+        seats = JSON.parse(b.seat_numbers); 
+        if (!Array.isArray(seats)) seats = [seats]; 
+      } catch { 
+        seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
+      }
+      return { 
+        ...b, 
+        seat_numbers: seats, 
+        total_amount: Number(b.total_amount) || 0,
+        payment_url: b.payment_proof || null // tambahkan property ini
+      };
     });
 
+    // Format bundles
     const formattedBundles = bundles.map(b => ({
       ...b,
       total_amount: Number(b.total_amount || b.quantity) || 0,
       seat_numbers: [], // bundle tidak punya seat
       has_payment_image: !!b.payment_proof,
+      payment_url: b.payment_proof || null, // tambahkan property ini juga
       booking_date: b.created_at
     }));
 
-    res.json({ success: true, data: { bookings: formattedBookings, bundleOrders: formattedBundles } });
+    res.json({ 
+      success: true, 
+      data: { bookings: formattedBookings, bundleOrders: formattedBundles } 
+    });
 
   } catch (err) {
-    console.error(err);
+    if (connection) connection.release();
+    console.error('❌ /admin/all-bookings error:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
