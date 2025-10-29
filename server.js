@@ -463,8 +463,7 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
     const [bookings] = await connection.execute(`
       SELECT 
         id, booking_reference, customer_name, customer_email, customer_phone,
-        movie_title, total_amount, seat_numbers, status, payment_proof,
-        payment_filename, payment_base64 IS NOT NULL AS has_payment_image,
+        movie_title, total_amount, seat_numbers, status, payment_filename, payment_base64,
         DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS booking_date
       FROM bookings
       ORDER BY booking_date DESC
@@ -477,40 +476,45 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
 
     connection.release();
 
-    // Format bookings
+    // Format bookings reguler
     const formattedBookings = bookings.map(b => {
-  let seats;
-  try { 
-    seats = JSON.parse(b.seat_numbers); 
-    if (!Array.isArray(seats)) seats = [seats]; 
-  } catch { 
-    seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
-  }
+      let seats;
+      try { 
+        seats = JSON.parse(b.seat_numbers); 
+        if (!Array.isArray(seats)) seats = [seats]; 
+      } catch { 
+        seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
+      }
 
-  // Tentukan URL payment
-  let paymentURL = null;
-  if (b.payment_proof) paymentURL = b.payment_proof; 
-  else if (b.payment_base64) paymentURL = `data:${b.payment_mimetype};base64,${b.payment_base64}`;
+      // Buat payment_url berdasarkan payment_base64 atau payment_filename
+      let paymentUrl = null;
+      if (b.payment_base64) {
+        paymentUrl = `data:image/jpeg;base64,${b.payment_base64}`;
+      } else if (b.payment_filename) {
+        paymentUrl = `https://server.com/uploads/${b.payment_filename}`;
+      }
 
-  return { 
-    ...b, 
-    seat_numbers: seats, 
-    total_amount: Number(b.total_amount) || 0,
-    payment_url: paymentURL,
-    has_payment_image: !!paymentURL,
-    booking_date: new Date(b.booking_date).toISOString()
-  };
-});
+      return { 
+        ...b, 
+        seat_numbers: seats, 
+        total_amount: Number(b.total_amount) || 0,
+        has_payment_image: !!paymentUrl,
+        payment_url: paymentUrl
+      };
+    });
 
     // Format bundles
-    const formattedBundles = bundles.map(b => ({
-      ...b,
-      total_amount: Number(b.total_amount || b.quantity) || 0,
-      seat_numbers: [], // bundle tidak punya seat
-      has_payment_image: !!b.payment_proof,
-      payment_url: b.payment_proof || null, // tambahkan property ini juga
-      booking_date: b.created_at
-    }));
+    const formattedBundles = bundles.map(b => {
+      let paymentUrl = b.payment_proof || null; // bundle tetap pakai payment_proof
+      return {
+        ...b,
+        total_amount: Number(b.total_amount || b.quantity) || 0,
+        seat_numbers: [], // bundle tidak punya seat
+        has_payment_image: !!paymentUrl,
+        payment_url: paymentUrl,
+        booking_date: b.created_at
+      };
+    });
 
     res.json({ 
       success: true, 
