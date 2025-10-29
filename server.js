@@ -486,12 +486,18 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
   } catch { 
     seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
   }
+
+  // Tentukan URL payment
+  let paymentURL = null;
+  if (b.payment_proof) paymentURL = b.payment_proof; 
+  else if (b.payment_base64) paymentURL = `data:${b.payment_mimetype};base64,${b.payment_base64}`;
+
   return { 
     ...b, 
     seat_numbers: seats, 
     total_amount: Number(b.total_amount) || 0,
-    payment_url: b.payment_proof || null,
-    // convert booking_date ke ISO string
+    payment_url: paymentURL,
+    has_payment_image: !!paymentURL,
     booking_date: new Date(b.booking_date).toISOString()
   };
 });
