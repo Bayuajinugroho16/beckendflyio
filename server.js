@@ -373,75 +373,65 @@ app.post('/api/admin/verify-payment', authenticateToken, requireAdmin, async (re
   }
 });
 
-// ==================== ADMIN: ALL ORDERS (BOOKINGS + BUNDLE) ====================
 app.get('/api/admin/all-orders', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.promise().getConnection();
+    connection = await pool.promise().getConnection();
 
-    // 1️⃣ Ambil semua bookings
+    // Ambil semua bookings reguler
     const [bookings] = await connection.execute(`
       SELECT 
-        'booking' AS type,
+        'regular' AS order_type,
         id,
         booking_reference AS reference,
         customer_name,
         customer_email,
         customer_phone,
-        movie_title,
+        movie_title AS item_name,
         total_amount,
         seat_numbers,
         status,
         payment_proof,
         payment_filename,
         payment_base64 IS NOT NULL AS has_payment_image,
-        verified_at,
-        verified_by,
-        admin_notes,
-        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS date
+        booking_date AS date
       FROM bookings
       ORDER BY booking_date DESC
     `);
 
-    const formattedBookings = bookings.map(b => ({
-      ...b,
-      seat_numbers: parseSeats(b.seat_numbers),
-      total_amount: Number(b.total_amount) || 0
-    }));
-
-    // 2️⃣ Ambil semua bundle orders
+    // Ambil semua bundle orders
     const [bundles] = await connection.execute(`
-      SELECT 
-        'bundle' AS type,
+      SELECT
+        'bundle' AS order_type,
         id,
         order_reference AS reference,
         customer_name,
         NULL AS customer_email,
         NULL AS customer_phone,
-        bundle_name AS movie_title,
+        bundle_name AS item_name,
         quantity AS total_amount,
         NULL AS seat_numbers,
         status,
         payment_proof,
         NULL AS payment_filename,
         NULL AS has_payment_image,
-        NULL AS verified_at,
-        NULL AS verified_by,
-        NULL AS admin_notes,
-        DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS date
+        created_at AS date
       FROM bundle_orders
       ORDER BY created_at DESC
     `);
 
     connection.release();
 
-    // 3️⃣ Gabungkan bookings + bundles
-    const allOrders = [...formattedBookings, ...bundles].sort((a,b)=>new Date(b.date) - new Date(a.date));
+    // Gabungkan dan urutkan berdasarkan tanggal terbaru
+    const allOrders = [...bookings, ...bundles].sort(
+      (a, b) => new Date(b.date) - new Date(a.date)
+    );
 
     res.json({ success: true, data: allOrders });
-
-  } catch (error) {
-    console.error('❌ Admin all orders error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch all orders: ' + error.message });
+  } catch (err) {
+    if (connection) connection.release();
+    console.error('❌ Fetch all orders error:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
