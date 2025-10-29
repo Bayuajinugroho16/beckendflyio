@@ -11,7 +11,6 @@ import authRoutes from './routes/auth.js';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
 import cron from 'node-cron';
-import bookings from './routes/bookings.js';
 
 
 
@@ -36,7 +35,7 @@ app.options('*', cors()); // handle preflight for all routes
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/api/auth', authRoutes);
-app.use('/api/bookings', bookingRoutes);
+
 // ==================== SUPABASE CONFIG ====================
 const supabase = createClient(
   process.env.SUPABASE_URL,
