@@ -461,6 +461,38 @@ app.post("/api/bundle/upload-payment", async (req, res) => {
   }
 });
 
+// gabungkan bookings + bundle_orders
+app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const connection = await pool.promise().getConnection();
+
+    const [bookings] = await connection.execute(`
+      SELECT 
+        id, booking_reference, customer_name, customer_email, customer_phone,
+        movie_title, total_amount, seat_numbers, status, payment_proof,
+        payment_filename, payment_base64 IS NOT NULL AS has_payment_image,
+        DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS booking_date
+      FROM bookings
+      ORDER BY booking_date DESC
+    `);
+
+    const [bundles] = await connection.execute(`
+      SELECT * FROM bundle_orders ORDER BY id DESC
+    `);
+
+    connection.release();
+
+    res.json({
+      success: true,
+      data: { bookings, bundleOrders: bundles }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
 
 
 
