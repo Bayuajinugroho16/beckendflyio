@@ -580,22 +580,59 @@ app.get('/api/bookings/bundle-orders', async (req, res) => {
   try { res.json({ success: true, data: [], message: 'Bundle orders feature coming soon' }); } catch (error) { console.error('❌ Bundle orders error:', error); res.status(500).json({ success: false, message: 'Failed to fetch bundle orders: ' + error.message }); }
 });
 
-app.get('/api/bookings/my-bookings', async (req, res) => {
+app.get('/api/bookings/my-bookings', authenticateToken, async (req, res) => {
   try {
-    const { username, email } = req.query;
-    if (!username && !email) return res.status(400).json({ success: false, message: 'Username or email required' });
+    const username = req.user.username; // ambil dari token
     const connection = await pool.promise().getConnection();
-    let query = `SELECT id, booking_reference, customer_name, customer_email, movie_title, total_amount, seat_numbers, status, payment_proof, payment_filename, payment_base64 IS NOT NULL as has_payment_image, booking_date FROM bookings WHERE status != 'cancelled'`;
-    const params = [];
-    if (username) { query += ' AND customer_name = ?'; params.push(username); }
-    if (email) { query += ' AND customer_email = ?'; params.push(email); }
-    query += ' ORDER BY booking_date DESC';
-    const [bookings] = await connection.execute(query, params);
-    connection.release();
-    res.json({ success: true, data: bookings });
-  } catch (error) { console.error('❌ My bookings error:', error); res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message }); }
-});
 
+    // Ambil regular bookings user
+    const [bookings] = await connection.execute(`
+      SELECT id, booking_reference, customer_name, customer_email, movie_title, total_amount, seat_numbers, status, payment_proof, payment_filename, payment_base64 IS NOT NULL AS has_payment_image, DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS booking_date
+      FROM bookings
+      WHERE customer_name = ? AND status != 'cancelled'
+      ORDER BY booking_date DESC
+    `, [username]);
+
+    // Ambil bundle orders user
+    const [bundles] = await connection.execute(`
+      SELECT id, order_reference, bundle_name, quantity AS total_amount, status, payment_proof, created_at
+      FROM bundle_orders
+      WHERE customer_name = ?
+      ORDER BY created_at DESC
+    `, [username]);
+
+    connection.release();
+
+    // Format regular bookings
+    const formattedBookings = bookings.map(b => {
+      let seats;
+      try { seats = JSON.parse(b.seat_numbers); if (!Array.isArray(seats)) seats = [seats]; }
+      catch { seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; }
+
+      let paymentUrl = null;
+      if (b.payment_base64) paymentUrl = `data:image/jpeg;base64,${b.payment_base64}`;
+      else if (b.payment_filename) paymentUrl = `https://server.com/uploads/${b.payment_filename}`;
+
+      return { ...b, seat_numbers: seats, total_amount: Number(b.total_amount), payment_url: paymentUrl, has_payment_image: !!paymentUrl };
+    });
+
+    // Format bundles
+    const formattedBundles = bundles.map(b => ({
+      ...b,
+      seat_numbers: [],
+      total_amount: Number(b.total_amount),
+      payment_url: b.payment_proof || null,
+      has_payment_image: !!b.payment_proof,
+      booking_date: b.created_at
+    }));
+
+    res.json({ success: true, data: { bookings: formattedBookings, bundleOrders: formattedBundles } });
+
+  } catch (error) {
+    console.error('❌ My bookings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message });
+  }
+});
 // ==================== AUTH (kept) ====================
 app.post('/api/auth/login', async (req, res) => {
   try {
