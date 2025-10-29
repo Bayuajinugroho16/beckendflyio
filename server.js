@@ -655,34 +655,39 @@ app.post("/api/bundle/create-order", async (req, res) => {
   }
 });
 
-// ✅ UPDATE PAYMENT PROOF (versi frontend lama)
+// ✅ Update Payment Proof untuk bundle order
 app.post("/api/bundle/update-payment-proof", async (req, res) => {
   try {
-    const { order_reference, payment_proof } = req.body;
+    const { order_reference, payment_proof_url } = req.body;
 
-    if (!order_reference || !payment_proof) {
+    if (!order_reference || !payment_proof_url) {
       return res.status(400).json({
         success: false,
-        message: "Order reference dan payment proof diperlukan.",
+        message: "Order reference dan payment proof URL diperlukan.",
       });
     }
 
     const connection = await pool.promise().getConnection();
+
     const [result] = await connection.execute(
       `UPDATE bundle_orders 
-       SET payment_proof = ?, status = 'paid', updated_at = NOW() 
+       SET payment_proof = ?, status = 'waiting_verification', updated_at = NOW() 
        WHERE order_reference = ?`,
-      [payment_proof, order_reference]
+      [payment_proof_url, order_reference]
     );
+
     connection.release();
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Order tidak ditemukan." });
+      return res.status(404).json({
+        success: false,
+        message: "Order tidak ditemukan.",
+      });
     }
 
     res.json({
       success: true,
-      message: "Bukti pembayaran berhasil diperbarui.",
+      message: "Bukti pembayaran berhasil diunggah dan menunggu verifikasi admin.",
     });
   } catch (err) {
     console.error("❌ Error update payment proof:", err);

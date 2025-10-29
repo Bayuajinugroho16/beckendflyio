@@ -1199,27 +1199,7 @@ app.post('/create', async (req, res) => {
   }
 });
 
-router.post("/update-payment-proof", async (req, res) => {
-  try {
-    const { order_reference, payment_proof } = req.body;
 
-    if (!order_reference || !payment_proof) {
-      return res.status(400).json({ success: false, message: "Data tidak lengkap." });
-    }
-
-    await pool.promise().execute(
-      `UPDATE bundle_orders 
-       SET payment_proof = ?, status = 'paid', updated_at = NOW() 
-       WHERE order_reference = ?`,
-      [payment_proof, order_reference]
-    );
-
-    res.json({ success: true, message: "Bukti pembayaran berhasil diperbarui." });
-  } catch (err) {
-    console.error("❌ Error update payment proof:", err);
-    res.status(500).json({ success: false, message: "Gagal update payment proof" });
-  }
-});
 
 router.post("/create-order", async (req, res) => {
   try {
@@ -1270,6 +1250,57 @@ router.post("/create-order", async (req, res) => {
   }
 });
 
+
+router.post('/update-payment-proof', async (req, res) => {
+  const { order_reference, payment_proof } = req.body;
+
+  if (!order_reference || !payment_proof) {
+    return res.status(400).json({
+      success: false,
+      message: 'order_reference dan payment_proof wajib diisi'
+    });
+  }
+
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+
+    // 1️⃣ Cek apakah order_reference ada
+    const [rows] = await connection.execute(
+      'SELECT * FROM bundle_orders WHERE order_reference = ?',
+      [order_reference]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Order reference "${order_reference}" tidak ditemukan`
+      });
+    }
+
+    // 2️⃣ Update payment_proof dan status
+    await connection.execute(
+      `UPDATE bundle_orders 
+       SET payment_proof = ?, status = 'paid', updated_at = NOW() 
+       WHERE order_reference = ?`,
+      [payment_proof, order_reference]
+    );
+
+    res.json({
+      success: true,
+      message: `Payment proof untuk order "${order_reference}" berhasil diperbarui`,
+    });
+
+  } catch (error) {
+    console.error('❌ Error update payment proof:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal update payment proof: ' + error.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
 
 router.get("/:order_reference", async (req, res) => {
   try {
