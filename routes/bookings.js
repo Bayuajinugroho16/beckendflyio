@@ -1199,6 +1199,28 @@ app.post('/create', async (req, res) => {
   }
 });
 
+router.post("/update-payment-proof", async (req, res) => {
+  try {
+    const { order_reference, payment_proof } = req.body;
+
+    if (!order_reference || !payment_proof) {
+      return res.status(400).json({ success: false, message: "Data tidak lengkap." });
+    }
+
+    await pool.promise().execute(
+      `UPDATE bundle_orders 
+       SET payment_proof = ?, status = 'paid', updated_at = NOW() 
+       WHERE order_reference = ?`,
+      [payment_proof, order_reference]
+    );
+
+    res.json({ success: true, message: "Bukti pembayaran berhasil diperbarui." });
+  } catch (err) {
+    console.error("❌ Error update payment proof:", err);
+    res.status(500).json({ success: false, message: "Gagal update payment proof" });
+  }
+});
+
 router.post("/create-order", async (req, res) => {
   try {
     const {
