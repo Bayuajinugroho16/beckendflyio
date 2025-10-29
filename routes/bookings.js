@@ -127,68 +127,31 @@ router.put('/bundle-orders/:order_reference/status', async (req, res) => {
     if (connection) connection.release();
   }
 });
-// ✅ OCCUPIED SEATS ENDPOINT (HANYA CONFIRMED)
 router.get('/occupied-seats', async (req, res) => {
   let connection;
   try {
     const { showtime_id, movie_title } = req.query;
-
-    console.log('🎯 Fetching occupied seats for showtime:', showtime_id, 'and movie:', movie_title);
-
     if (!showtime_id || !movie_title) {
-      return res.status(400).json({
-        success: false,
-        message: 'Showtime ID dan Movie Title wajib diisi'
-      });
+      return res.status(400).json({ success: false, message: 'Showtime ID dan Movie Title wajib diisi' });
     }
 
     connection = await pool.promise().getConnection();
-
-    // 🎯 Hanya ambil kursi yang sudah dikonfirmasi admin
     const [bookings] = await connection.execute(
-      `
-      SELECT seat_numbers 
-      FROM bookings 
-      WHERE showtime_id = ? 
-        AND movie_title = ? 
-        AND status = 'confirmed'
-      `,
+      `SELECT seat_numbers FROM bookings WHERE showtime_id = ? AND movie_title = ? AND status = 'confirmed'`,
       [showtime_id, movie_title]
     );
 
     const occupiedSeats = new Set();
-
     bookings.forEach(booking => {
-      try {
-        let seats = booking.seat_numbers;
-        if (typeof seats === 'string') {
-          try {
-            seats = JSON.parse(seats);
-          } catch {
-            seats = seats.split(',').map(s => s.trim().replace(/[\[\]"]/g, ''));
-          }
-        }
-
-        if (Array.isArray(seats)) {
-          seats.forEach(seat => seat && occupiedSeats.add(seat));
-        }
-      } catch (err) {
-        console.error('❌ Error parsing seats:', err);
-      }
+      const seats = parseSeatNumbers(booking.seat_numbers);
+      seats.forEach(seat => seat && occupiedSeats.add(seat));
     });
 
-    res.json({
-      success: true,
-      data: Array.from(occupiedSeats)
-    });
+    res.json({ success: true, data: Array.from(occupiedSeats) });
 
   } catch (error) {
-    console.error('❌ Error in occupied-seats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error: ' + error.message,
-      data: []
-    });
+    console.error('Error fetching occupied seats:', error);
+    res.status(500).json({ success: false, message: error.message, data: [] });
   } finally {
     if (connection) connection.release();
   }
