@@ -440,13 +440,16 @@ app.post("/api/bundle/upload-payment", async (req, res) => {
   const { order_reference, paymentProofUrl } = req.body;
 
   try {
-    await db.query(
+    const connection = await pool.promise().getConnection();
+    await connection.execute(
       "UPDATE bundle_orders SET payment_proof = ? WHERE order_reference = ?",
       [paymentProofUrl, order_reference]
     );
+    connection.release();
 
     res.json({ success: true, message: "Bukti pembayaran berhasil diupload" });
   } catch (err) {
+    console.error("❌ Upload payment error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 });

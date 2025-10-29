@@ -1214,46 +1214,60 @@ router.post("/create-order", async (req, res) => {
       customer_name,
       customer_phone,
       customer_email,
+      payment_proof // opsional
     } = req.body;
 
     if (!bundle_id || !bundle_name || !customer_name) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Data tidak lengkap." });
+      return res.status(400).json({
+        success: false,
+        message: "Data tidak lengkap.",
+      });
     }
 
     const order_reference = `BUNDLE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+    // konversi angka agar tidak terjadi data truncated
+    const qty = Number(quantity) || 1;
+    const bundlePrice = Number(bundle_price) || 0;
+    const originalPrice = Number(original_price) || 0;
+    const saving = Number(savings) || 0;
+    const total = Number(total_price) || 0;
+
     await pool.promise().execute(
       `INSERT INTO bundle_orders
-      (order_reference, bundle_id, bundle_name, bundle_description, bundle_price, original_price, savings, quantity, total_price, customer_name, customer_phone, customer_email, status, order_date, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW(), NOW())`,
+      (order_reference, bundle_id, bundle_name, bundle_description, bundle_price, original_price, savings, quantity, total_price, customer_name, customer_phone, customer_email, payment_proof, status, order_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW(), NOW())`,
       [
         order_reference,
         bundle_id,
         bundle_name,
         bundle_description,
-        bundle_price,
-        original_price,
-        savings,
-        quantity,
-        total_price,
+        bundlePrice,
+        originalPrice,
+        saving,
+        qty,
+        total,
         customer_name,
         customer_phone,
         customer_email,
+        payment_proof || null, // boleh kosong
       ]
     );
 
     res.json({
       success: true,
-      message: "Pesanan bundle berhasil dibuat.",
+      message: "✅ Pesanan bundle berhasil dibuat.",
       order_reference,
     });
   } catch (err) {
-    console.error("❌ Error create bundle:", err);
-    res.status(500).json({ success: false, message: err.message });
+    console.error("❌ Error create bundle:", err.sqlMessage || err.message);
+    res.status(500).json({
+      success: false,
+      message: "Gagal membuat pesanan bundle: " + (err.sqlMessage || err.message),
+    });
   }
 });
+
 
 router.get("/:order_reference", async (req, res) => {
   try {
