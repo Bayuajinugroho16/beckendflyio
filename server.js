@@ -628,6 +628,43 @@ app.get('/api/admin/bundle-orders', authenticateToken, requireAdmin, async (req,
   }
 });
 
+// ==================== UPDATE STATUS BUNDLE ====================
+app.put('/api/admin/bundle-orders/:orderReference/status', authenticateToken, requireAdmin, async (req, res) => {
+  const { orderReference } = req.params;
+  const { status } = req.body;
+
+  if (!status) return res.status(400).json({ success: false, message: 'Status required' });
+
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+
+    const allowedStatus = ['pending', 'confirmed', 'rejected'];
+    if (!allowedStatus.includes(status)) {
+      connection.release();
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const [result] = await connection.execute(
+      'UPDATE bundle_orders SET status = ? WHERE order_reference = ?',
+      [status, orderReference]
+    );
+
+    connection.release();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Bundle order not found' });
+    }
+
+    res.json({ success: true, message: `Bundle order status updated to ${status}` });
+  } catch (err) {
+    if (connection) connection.release();
+    console.error('❌ Update bundle order status error:', err);
+    res.status(500).json({ success: false, message: 'Failed to update status: ' + err.message });
+  }
+});
+
+
 // ==================== BASIC ROUTES ====================
 app.get('/api/test', (req, res) => res.json({ success: true, message: 'Server is working!', timestamp: new Date().toISOString() }));
 app.get('/', (req, res) => res.json({ message: 'Admin Verification Server Running!', status: 'OK', features: ['Payment Verification System', 'Admin Dashboard', 'Supabase Storage'] }));
