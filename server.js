@@ -479,20 +479,22 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
 
     // Format bookings
     const formattedBookings = bookings.map(b => {
-      let seats;
-      try { 
-        seats = JSON.parse(b.seat_numbers); 
-        if (!Array.isArray(seats)) seats = [seats]; 
-      } catch { 
-        seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
-      }
-      return { 
-        ...b, 
-        seat_numbers: seats, 
-        total_amount: Number(b.total_amount) || 0,
-        payment_url: b.payment_proof || null // tambahkan property ini
-      };
-    });
+  let seats;
+  try { 
+    seats = JSON.parse(b.seat_numbers); 
+    if (!Array.isArray(seats)) seats = [seats]; 
+  } catch { 
+    seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
+  }
+  return { 
+    ...b, 
+    seat_numbers: seats, 
+    total_amount: Number(b.total_amount) || 0,
+    payment_url: b.payment_proof || null,
+    // convert booking_date ke ISO string
+    booking_date: new Date(b.booking_date).toISOString()
+  };
+});
 
     // Format bundles
     const formattedBundles = bundles.map(b => ({
