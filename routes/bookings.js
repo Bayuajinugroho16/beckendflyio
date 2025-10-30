@@ -965,23 +965,22 @@ router.post('/upload-payment/:booking_reference', upload.single('file'), async (
     // Upload ke Supabase Storage
     const fileName = `bukti-${booking_reference}-${Date.now()}.jpg`;
     const { data, error } = await supabase.storage
-      .from('bukti-pembayaran')
-      .upload(fileName, file.buffer, {
-        contentType: file.mimetype,
-        upsert: true
-      });
-
+  .from('bukti_pembayaran') // pastikan nama bucket sama persis seperti di dashboard Supabase
+  .upload(fileName, file.buffer, {
+    cacheControl: '3600',
+    contentType: file.mimetype,
+    upsert: true
+  });
     if (error) throw error;
 
-    const fileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/bukti-pembayaran/${fileName}`;
+    const fileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/bukti_pembayaran/${fileName}`;
 
-    // Update database
     await pool.promise().execute(`
-      UPDATE bookings 
-      SET payment_url = ?, payment_filename = ?, payment_mimetype = ?, 
-          uploaded_at = NOW(), status = 'waiting_verification'
-      WHERE booking_reference = ?
-    `, [fileUrl, file.originalname, file.mimetype, booking_reference]);
+  UPDATE bookings 
+  SET payment_url = ?, payment_filename = ?, payment_mimetype = ?, 
+      uploaded_at = NOW(), status = 'waiting_verification'
+  WHERE booking_reference = ?
+`, [fileUrl, file.originalname, file.mimetype, booking_reference]);
 
     res.json({
       success: true,

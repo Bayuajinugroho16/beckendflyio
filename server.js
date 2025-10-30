@@ -280,12 +280,12 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
 
   try {
     const { data, error } = await supabase.storage
-      .from(process.env.SUPABASE_BUCKET)
-      .upload(filePath, req.file.buffer, {
-        contentType: req.file.mimetype,
-        cacheControl: '3600',
-        upsert: true,
-      });
+  .from('bukti_pembayaran') 
+  .upload(fileName, file.buffer, {
+    cacheControl: '3600',
+    contentType: file.mimetype,
+    upsert: true
+  });
 
     if (error) throw error;
 
