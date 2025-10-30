@@ -462,7 +462,7 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
     // Ambil semua bookings reguler
     const [bookings] = await connection.execute(`
       SELECT 
-        id, booking_reference, customer_name, customer_email,customer_address, customer_phone,
+        id, booking_reference, customer_name, customer_email,customer_phone,
         movie_title, total_amount, seat_numbers, status, payment_filename, payment_base64,
         DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') AS booking_date
       FROM bookings
