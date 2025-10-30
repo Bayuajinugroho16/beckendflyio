@@ -674,7 +674,7 @@ app.post("/api/bundle/create-order", async (req, res) => {
     total_price,
     customer_name,
     customer_phone,
-    customer_email,
+    customer_address,
     status = "pending",
   } = req.body;
 
@@ -692,7 +692,7 @@ app.post("/api/bundle/create-order", async (req, res) => {
 
     const [result] = await connection.execute(
       `INSERT INTO bundle_orders 
-      (order_reference, bundle_id, bundle_name, bundle_description, bundle_price, original_price, savings, quantity, total_price, customer_name, customer_phone, customer_email, status, order_date, created_at, updated_at)
+      (order_reference, bundle_id, bundle_name, bundle_description, bundle_price, original_price, savings, quantity, total_price, customer_name, customer_phone, customer_address, status, order_date, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
       [
         order_reference,
@@ -706,7 +706,7 @@ app.post("/api/bundle/create-order", async (req, res) => {
         total_price,
         customer_name,
         customer_phone,
-        customer_email,
+        customer_address,
         status,
       ]
     );
