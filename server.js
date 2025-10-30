@@ -596,6 +596,42 @@ app.get('/api/bookings/my-bookings', async (req, res) => {
   } catch (error) { console.error('❌ My bookings error:', error); res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message }); }
 });
 
+// Ambil semua tiket user (bookings + bundle orders)
+app.get('/api/bookings/my-tickets', async (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ success: false, message: 'Username required' });
+
+    const connection = await pool.promise().getConnection();
+
+    // Ambil bookings reguler
+    const [bookings] = await connection.execute(
+      `SELECT id, booking_reference, customer_name, customer_email, movie_title, total_amount, seat_numbers, status, payment_proof, payment_filename, payment_base64 IS NOT NULL as has_payment_image, DATE_FORMAT(booking_date, '%Y-%m-%d %H:%i') as booking_date
+       FROM bookings
+       WHERE customer_name = ? AND status != 'cancelled'
+       ORDER BY booking_date DESC`,
+      [username]
+    );
+
+    // Ambil bundle orders
+    const [bundles] = await connection.execute(
+      `SELECT id, order_reference, bundle_name, quantity, total_price, customer_name, status, payment_proof, created_at
+       FROM bundle_orders
+       WHERE customer_name = ?
+       ORDER BY created_at DESC`,
+      [username]
+    );
+
+    connection.release();
+
+    res.json({ success: true, data: { bookings, bundleOrders: bundles } });
+  } catch (err) {
+    console.error('❌ My tickets error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
 // ==================== AUTH (kept) ====================
 app.post('/api/auth/login', async (req, res) => {
   try {
