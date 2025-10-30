@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
     
     const [bookings] = await connection.execute(`
       SELECT 
-        id, booking_reference, customer_name, customer_email,
+        id, booking_reference, customer_name, customer_email,customer_address,
         customer_phone, movie_title, showtime_id, seat_numbers,
         total_amount, status, booking_date, is_verified,
         payment_proof, payment_filename, payment_base64,
