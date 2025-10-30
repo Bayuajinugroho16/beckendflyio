@@ -615,8 +615,9 @@ app.get('/api/bookings/my-tickets', async (req, res) => {
 
     const [bundles] = await connection.execute(
   `SELECT 
-     id, order_reference, bundle_name, quantity, total_price AS total_amount, 
-     customer_name, status, payment_proof, created_at
+     id, order_reference, bundle_name, quantity, total_price AS total_amount,
+     customer_name, status, payment_proof,
+     created_at AS booking_date
    FROM bundle_orders
    WHERE customer_name = ?
    ORDER BY created_at DESC`,
