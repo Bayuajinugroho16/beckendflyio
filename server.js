@@ -791,7 +791,7 @@ app.put('/api/admin/bundle-orders/:orderReference/status', authenticateToken, re
   try {
     connection = await pool.promise().getConnection();
 
-    const allowedStatus = ['pending', 'confirmed', 'rejected'];
+    const allowedStatus = ['pending', 'confirmed', 'payment_rejected'];
     if (!allowedStatus.includes(status)) {
       connection.release();
       return res.status(400).json({ success: false, message: 'Invalid status' });
