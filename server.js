@@ -613,14 +613,15 @@ app.get('/api/bookings/my-tickets', async (req, res) => {
       [username]
     );
 
-    // Ambil bundle orders
     const [bundles] = await connection.execute(
-      `SELECT id, order_reference, bundle_name, quantity, total_price, customer_name, status, payment_proof, created_at
-       FROM bundle_orders
-       WHERE customer_name = ?
-       ORDER BY created_at DESC`,
-      [username]
-    );
+  `SELECT 
+     id, order_reference, bundle_name, quantity, total_price AS total_amount, 
+     customer_name, status, payment_proof, created_at
+   FROM bundle_orders
+   WHERE customer_name = ?
+   ORDER BY created_at DESC`,
+  [username]
+);
 
     connection.release();
 
