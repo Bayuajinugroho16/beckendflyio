@@ -279,17 +279,20 @@ app.post('/api/upload-payment', upload.single('payment_proof'), async (req, res)
   const filePath = `${bookingRef}/${fileName}`;
 
   try {
+    const bucketName = 'bukti_pembayaran';
     const { data, error } = await supabase.storage
-  .from('bukti_pembayaran') 
-  .upload(fileName, file.buffer, {
+  .from(bucketName)
+  .upload(filePath, req.file.buffer, {
     cacheControl: '3600',
-    contentType: file.mimetype,
+    contentType: req.file.mimetype,
     upsert: true
   });
 
-    if (error) throw error;
+if (error) throw error;
 
-    const { data: publicURLData } = supabase.storage.from(process.env.SUPABASE_BUCKET).getPublicUrl(filePath);
+    const { data: publicURLData } = supabase.storage
+  .from(bucketName)
+  .getPublicUrl(filePath);
     const publicURL = publicURLData.publicUrl;
 
     const [result] = await pool.promise().execute(
@@ -478,30 +481,24 @@ app.get('/api/admin/all-bookings', authenticateToken, requireAdmin, async (req, 
 
     // Format bookings reguler
     const formattedBookings = bookings.map(b => {
-      let seats;
-      try { 
-        seats = JSON.parse(b.seat_numbers); 
-        if (!Array.isArray(seats)) seats = [seats]; 
-      } catch { 
-        seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers]; 
-      }
+  let seats;
+  try {
+    seats = JSON.parse(b.seat_numbers);
+    if (!Array.isArray(seats)) seats = [seats];
+  } catch {
+    seats = typeof b.seat_numbers === 'string' ? b.seat_numbers.split(',').map(s => s.trim()) : [b.seat_numbers];
+  }
 
-      // Buat payment_url berdasarkan payment_base64 atau payment_filename
-      let paymentUrl = null;
-      if (b.payment_base64) {
-        paymentUrl = `data:image/jpeg;base64,${b.payment_base64}`;
-      } else if (b.payment_filename) {
-        paymentUrl = `https://server.com/uploads/${b.payment_filename}`;
-      }
+  let paymentUrl = b.payment_proof || (b.payment_base64 ? `data:image/jpeg;base64,${b.payment_base64}` : null);
 
-      return { 
-        ...b, 
-        seat_numbers: seats, 
-        total_amount: Number(b.total_amount) || 0,
-        has_payment_image: !!paymentUrl,
-        payment_url: paymentUrl
-      };
-    });
+  return {
+    ...b,
+    seat_numbers: seats,
+    total_amount: Number(b.total_amount) || 0,
+    has_payment_image: !!paymentUrl,
+    payment_url: paymentUrl
+  };
+});
 
     // Format bundles
     const formattedBundles = bundles.map(b => {
