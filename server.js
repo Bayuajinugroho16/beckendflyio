@@ -120,56 +120,90 @@ app.get('/api/bookings/occupied-seats', async (req, res) => {
   }
 });
 
-// ==================== CREATE BOOKING ====================
+// ==================== PERBAIKI ENDPOINT CREATE BOOKING ====================
+
 app.post('/api/bookings', async (req, res) => {
   let connection;
   try {
-    const { showtime_id, customer_email, seat_numbers, total_amount, movie_title } = req.body;
+    const { 
+      showtime_id, 
+      customer_email, 
+      seat_numbers, 
+      total_amount, 
+      movie_title,
+      customer_name,
+      customer_phone 
+    } = req.body;
 
-    if (!customer_email || !movie_title || !total_amount) {
-      return res.status(400).json({ success: false, message: 'Data tidak lengkap' });
+    console.log('📦 Incoming booking data:', req.body);
+
+    // Validasi data yang diperlukan
+    if (!customer_email || !movie_title || !total_amount || !seat_numbers || !customer_name) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Data tidak lengkap. Required: customer_name, customer_email, movie_title, total_amount, seat_numbers' 
+      });
     }
 
     connection = await pool.promise().getConnection();
 
-    // Ambil info user dari email login
-    const [users] = await connection.execute(
-  'SELECT username, phone FROM users WHERE username = ?',
-  [username]
-    );
-    if (users.length === 0) return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
-    
-    const user = users[0];
+    // Generate booking reference
+    const booking_reference = `BK${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
 
-    const seatNumbersJson = JSON.stringify(seat_numbers || []);
+    // Format seat numbers
+    const seatNumbersJson = JSON.stringify(Array.isArray(seat_numbers) ? seat_numbers : [seat_numbers]);
 
+    console.log('🔄 Creating booking with reference:', booking_reference);
+
+    // Insert booking ke database
     const [result] = await connection.execute(
-      `INSERT INTO bookings 
-      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [showtime_id, user.username, customer_email, user.phone, seatNumbersJson, total_amount, movie_title]
+      `INSERT INTO bookings (
+        booking_reference, showtime_id, customer_name, customer_email, 
+        customer_phone, seat_numbers, total_amount, movie_title, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        booking_reference,
+        showtime_id || 1, // fallback jika tidak ada showtime_id
+        customer_name,
+        customer_email,
+        customer_phone || '',
+        seatNumbersJson,
+        total_amount,
+        movie_title
+      ]
     );
+
+    connection.release();
+
+    console.log('✅ Booking created successfully, ID:', result.insertId);
+
+    // Return response dengan data booking
+    const bookingData = {
+      id: result.insertId,
+      booking_reference: booking_reference,
+      customer_name: customer_name,
+      customer_email: customer_email,
+      customer_phone: customer_phone || '',
+      movie_title: movie_title,
+      seat_numbers: seat_numbers,
+      total_amount: total_amount,
+      status: 'pending',
+      showtime_id: showtime_id || 1
+    };
 
     res.json({
       success: true,
       message: 'Booking berhasil dibuat',
-      data: {
-        id: result.insertId,
-        customer_name: user.username,
-        customer_email,
-        customer_phone: user.phone,
-        movie_title,
-        seat_numbers,
-        total_amount,
-        status: 'pending'
-      }
+      data: bookingData
     });
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: error.message });
-  } finally {
+    console.error('❌ Booking creation error:', error);
     if (connection) connection.release();
+    res.status(500).json({ 
+      success: false, 
+      message: 'Gagal membuat booking: ' + error.message 
+    });
   }
 });
 // ==================== PAYMENT & VERIFICATION ENDPOINTS ====================
