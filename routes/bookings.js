@@ -571,85 +571,93 @@ router.get('/:booking_reference', async (req, res) => {
 router.get('/my-bookings', async (req, res) => {
   let connection;
   try {
-    const username = req.query.username;
-    console.log('👤 Fetching bookings for user:', username);
-    
-    if (!username) {
+    const usernameOrEmail = req.query.username;
+    if (!usernameOrEmail) {
       return res.status(400).json({
         success: false,
-        message: 'Username is required',
+        message: 'Username atau email wajib diisi',
         data: []
       });
     }
-    
+
     connection = await pool.promise().getConnection();
-    
-    // ✅ QUERY REGULAR BOOKINGS
-    const regularBookingsQuery = `
+
+    // ✅ Regular bookings
+    const regularQuery = `
       SELECT 
-        b.id, b.booking_reference, b.verification_code,
-        b.customer_name, b.customer_email, u.phone AS customer_phone,
-        b.total_amount, b.seat_numbers, b.status, b.booking_date,
-        b.movie_title, b.showtime_id, b.is_verified, b.verified_at, b.qr_code_data,
-        b.payment_base64, b.payment_url, b.payment_filename, b.payment_mimetype,
+        b.id,
+        b.booking_reference,
+        b.verification_code,
+        b.customer_name,
+        b.customer_email,
+        COALESCE(u.phone, '') AS customer_phone,
+        b.total_amount,
+        b.seat_numbers,
+        b.status,
+        b.booking_date,
+        b.movie_title,
+        b.showtime_id,
+        b.is_verified,
+        b.verified_at,
+        b.qr_code_data,
+        b.payment_base64,
+        b.payment_url,
+        b.payment_filename,
+        b.payment_mimetype,
         'regular' AS order_type
       FROM bookings b
-     LEFT JOIN users u ON b.customer_name = u.username
+      LEFT JOIN users u 
+        ON LOWER(b.customer_name) = LOWER(u.username) 
+        OR LOWER(b.customer_email) = LOWER(u.email)
       WHERE LOWER(b.customer_name) = LOWER(?) OR LOWER(b.customer_email) = LOWER(?)
       ORDER BY b.booking_date DESC
     `;
-    
-    const bundleOrdersQuery = `
+
+    // ✅ Bundle orders
+    const bundleQuery = `
       SELECT 
-        bo.id, bo.order_reference AS booking_reference, '' AS verification_code,
-        bo.customer_name, bo.customer_email, u.phone AS customer_phone,
-        bo.total_price AS total_amount, '[]' AS seat_numbers,
-        bo.status, bo.order_date AS booking_date,
-        bo.bundle_name AS movie_title, 0 AS showtime_id, 0 AS is_verified,
-        NULL AS verified_at, NULL AS qr_code_data, 'bundle' AS order_type,
-        bo.payment_proof
+        bo.id,
+        bo.order_reference AS booking_reference,
+        '' AS verification_code,
+        bo.customer_name,
+        bo.customer_email,
+        COALESCE(u.phone, '') AS customer_phone,
+        bo.total_price AS total_amount,
+        '[]' AS seat_numbers,
+        bo.status,
+        bo.order_date AS booking_date,
+        bo.bundle_name AS movie_title,
+        0 AS showtime_id,
+        0 AS is_verified,
+        NULL AS verified_at,
+        NULL AS qr_code_data,
+        bo.payment_proof,
+        'bundle' AS order_type
       FROM bundle_orders bo
-      LEFT JOIN users u ON bo.customer_name = u.username
+      LEFT JOIN users u 
+        ON LOWER(bo.customer_name) = LOWER(u.username) 
+        OR LOWER(bo.customer_email) = LOWER(u.email)
       WHERE LOWER(bo.customer_name) = LOWER(?) OR LOWER(bo.customer_email) = LOWER(?)
       ORDER BY bo.order_date DESC
     `;
-    
-    const [regularBookings] = await connection.execute(regularBookingsQuery, [username, username]);
-    const [bundleOrders] = await connection.execute(bundleOrdersQuery, [username, username]);
-    
-    console.log(`✅ Found ${regularBookings.length} regular bookings`);
-    console.log(`✅ Found ${bundleOrders.length} bundle orders`);
-    
-    const allOrders = [...regularBookings, ...bundleOrders];
-    
-    const parsedBookings = allOrders.map(booking => {
+
+    const [regularBookings] = await connection.execute(regularQuery, [usernameOrEmail, usernameOrEmail]);
+    const [bundleOrders] = await connection.execute(bundleQuery, [usernameOrEmail, usernameOrEmail]);
+
+    // Gabungkan semua
+    const allBookings = [...regularBookings, ...bundleOrders];
+
+    const parsedBookings = allBookings.map(b => {
       let seatNumbers = [];
-      if (booking.order_type === 'regular') {
+      if (b.order_type === 'regular') {
         try {
-          if (Array.isArray(booking.seat_numbers)) {
-            seatNumbers = booking.seat_numbers;
-          } else if (typeof booking.seat_numbers === 'string') {
-            const parsed = JSON.parse(booking.seat_numbers);
-            seatNumbers = Array.isArray(parsed) ? parsed : [parsed];
-          } else if (booking.seat_numbers) {
-            seatNumbers = [String(booking.seat_numbers)];
-          }
-        } catch (error) {
-          console.log(`Error processing seats:`, error);
+          seatNumbers = Array.isArray(b.seat_numbers) ? b.seat_numbers : JSON.parse(b.seat_numbers);
+        } catch {
           seatNumbers = [];
         }
       }
 
-      const showtimeMap = {
-        1: '18:00 - Studio 1',
-        2: '20:30 - Studio 1', 
-        3: '21:00 - Studio 2',
-        4: '10:00 - Studio 1',
-        5: '13:00 - Studio 2',
-        6: '16:00 - Studio 1',
-        7: '19:00 - Studio 2'
-      };
-
+      // Map status ke text + class
       const statusMap = {
         'pending': { text: 'Pending Payment', class: 'pending' },
         'pending_verification': { text: 'Menunggu Verifikasi', class: 'pending-verification' },
@@ -657,59 +665,19 @@ router.get('/my-bookings', async (req, res) => {
         'payment_rejected': { text: 'Pembayaran Ditolak', class: 'rejected' },
         'cancelled': { text: 'Dibatalkan', class: 'cancelled' }
       };
-      
-      const statusInfo = statusMap[booking.status] || { text: booking.status, class: 'unknown' };
-      
-      let showtimeText;
-      if (booking.order_type === 'bundle') {
-        showtimeText = 'Bundle Ticket';
-      } else {
-        showtimeText = showtimeMap[booking.showtime_id] || `Showtime ${booking.showtime_id}`;
-      }
-
-      // ✅ PAYMENT PROOF UNTUK REGULAR DAN BUNDLE
-      let paymentProof = null;
-      if (booking.order_type === 'regular') {
-        paymentProof = booking.payment_base64 
-          ? `data:${booking.payment_mimetype || 'image/jpeg'};base64,${booking.payment_base64}`
-          : booking.payment_url || null;
-      } else {
-        paymentProof = booking.payment_proof || null;
-      }
+      const statusInfo = statusMap[b.status] || { text: b.status, class: 'unknown' };
 
       return {
-        id: booking.id,
-        booking_reference: booking.booking_reference,
-        verification_code: booking.verification_code,
-        movie_title: booking.movie_title,
+        ...b,
         seat_numbers: seatNumbers,
-        showtime_id: booking.showtime_id,
-        showtime: showtimeText,
-        total_amount: booking.total_amount,
-        customer_name: booking.customer_name,
-        customer_email: booking.customer_email,
-        customer_phone: booking.customer_phone,
-        status: booking.status,
         status_text: statusInfo.text,
         status_class: statusInfo.class,
-        booking_date: booking.booking_date,
-        is_verified: booking.is_verified,
-        verified_at: booking.verified_at,
-        qr_code_data: booking.qr_code_data,
-        order_type: booking.order_type,
-        is_bundle: booking.order_type === 'bundle',
-        payment_proof: paymentProof,
-        formatted_booking_date: new Date(booking.booking_date).toLocaleDateString('id-ID', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
+        payment_proof: b.order_type === 'regular'
+          ? (b.payment_base64 ? `data:${b.payment_mimetype || 'image/jpeg'};base64,${b.payment_base64}` : b.payment_url || null)
+          : b.payment_proof || null
       };
     });
-    
+
     res.json({
       success: true,
       data: parsedBookings,
@@ -724,14 +692,10 @@ router.get('/my-bookings', async (req, res) => {
         cancelled: parsedBookings.filter(b => b.status === 'cancelled').length
       }
     });
-    
+
   } catch (error) {
-    console.error('❌ ERROR in /my-bookings:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error: ' + error.message,
-      data: []
-    });
+    console.error('❌ Error fetching my bookings:', error);
+    res.status(500).json({ success: false, message: error.message, data: [] });
   } finally {
     if (connection) connection.release();
   }
