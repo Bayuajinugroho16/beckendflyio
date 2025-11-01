@@ -759,22 +759,44 @@ app.post("/api/bundle/update-payment-proof", async (req, res) => {
 });
 
 // ==================== DATABASE MANAGEMENT ENDPOINTS ====================
-// GET ALL USERS
+// GET ALL USERS (Admin only) - SESUAI STRUCTURE
 app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
   let connection;
   try {
     connection = await pool.promise().getConnection();
     const [users] = await connection.execute(`
-      SELECT id, username, email, role, phone, created_at 
+      SELECT 
+        id, 
+        username, 
+        email, 
+        password,  
+        role, 
+        phone, 
+        created_at, 
+        updated_at
       FROM users 
       ORDER BY created_at DESC
     `);
     connection.release();
-    res.json({ success: true, data: users });
+    
+    // Hapus password dari response untuk security
+    const safeUsers = users.map(user => {
+      const { password, ...userWithoutPassword } = user;
+      return userWithoutPassword;
+    });
+    
+    res.json({ 
+      success: true, 
+      data: safeUsers,
+      message: `Found ${safeUsers.length} users`
+    });
   } catch (error) {
-    console.error('❌ Users error:', error);
+    console.error('❌ Users endpoint error:', error);
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch users: ' + error.message 
+    });
   }
 });
 
@@ -784,15 +806,29 @@ app.get('/api/theaters', async (req, res) => {
   try {
     connection = await pool.promise().getConnection();
     const [theaters] = await connection.execute(`
-      SELECT * FROM theaters 
+      SELECT 
+        id,
+        theater_name,
+        location,
+        capacity,
+        screen_type,
+        created_at
+      FROM theaters 
       ORDER BY theater_name
     `);
     connection.release();
-    res.json({ success: true, data: theaters });
+    
+    res.json({ 
+      success: true, 
+      data: theaters 
+    });
   } catch (error) {
-    console.error('❌ Theaters error:', error);
+    console.error('❌ Theaters endpoint error:', error);
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch theaters: ' + error.message 
+    });
   }
 });
 
@@ -802,17 +838,37 @@ app.get('/api/movies', async (req, res) => {
   try {
     connection = await pool.promise().getConnection();
     const [movies] = await connection.execute(`
-      SELECT * FROM movies 
+      SELECT 
+        id,
+        title,
+        genre,
+        duration,
+        rating,
+        description,
+        poster_url,
+        trailer_url,
+        release_date,
+        created_at
+      FROM movies 
       ORDER BY title
     `);
     connection.release();
-    res.json({ success: true, data: movies });
+    
+    res.json({ 
+      success: true, 
+      data: movies 
+    });
   } catch (error) {
-    console.error('❌ Movies error:', error);
+    console.error('❌ Movies endpoint error:', error);
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch movies: ' + error.message 
+    });
   }
 });
+
+
 // GET ALL SHOWTIMES WITH DETAILS
 app.get('/api/showtimes', async (req, res) => {
   let connection;
@@ -820,8 +876,14 @@ app.get('/api/showtimes', async (req, res) => {
     connection = await pool.promise().getConnection();
     const [showtimes] = await connection.execute(`
       SELECT 
-        s.*, 
-        m.title as movie_title, 
+        s.id,
+        s.movie_id,
+        s.theater_id,
+        s.showtime,
+        s.price,
+        s.available_seats,
+        s.created_at,
+        m.title as movie_title,
         t.theater_name,
         t.location as theater_location
       FROM showtimes s 
@@ -830,26 +892,66 @@ app.get('/api/showtimes', async (req, res) => {
       ORDER BY s.showtime DESC
     `);
     connection.release();
-    res.json({ success: true, data: showtimes });
+    
+    res.json({ 
+      success: true, 
+      data: showtimes 
+    });
   } catch (error) {
-    console.error('❌ Showtimes error:', error);
+    console.error('❌ Showtimes endpoint error:', error);
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch showtimes: ' + error.message 
+    });
   }
 });
 
-
+// GET ALL BUNDLE ORDERS (Admin only) - SESUAI STRUCTURE BARU
 app.get('/api/admin/bundle-orders', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.promise().getConnection();
-    const [orders] = await connection.execute('SELECT * FROM bundle_orders ORDER BY id DESC');
+    connection = await pool.promise().getConnection();
+    const [orders] = await connection.execute(`
+      SELECT 
+        id,
+        order_reference,
+        bundle_id,
+        bundle_name,
+        bundle_description,
+        bundle_price,
+        original_price,
+        savings,
+        quantity,
+        total_price,
+        customer_name,
+        customer_phone,
+        customer_address,
+        customer_email,  
+        payment_proof,
+        status,
+        order_date,
+        created_at,
+        updated_at
+      FROM bundle_orders 
+      ORDER BY created_at DESC
+    `);
     connection.release();
-    res.json({ success: true, data: orders });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    
+    res.json({ 
+      success: true, 
+      data: orders,
+      message: `Found ${orders.length} bundle orders`
+    });
+  } catch (error) {
+    console.error('❌ Bundle orders endpoint error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch bundle orders: ' + error.message 
+    });
   }
 });
-
 // GET DASHBOARD STATISTICS
 app.get('/api/admin/dashboard-stats', authenticateToken, requireAdmin, async (req, res) => {
   let connection;
