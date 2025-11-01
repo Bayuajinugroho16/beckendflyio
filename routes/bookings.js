@@ -46,7 +46,8 @@ router.get('/', async (req, res) => {
     u.email AS customer_email,
     u.phone AS customer_phone
   FROM bookings b
-  LEFT JOIN users u ON b.customer_email = u.email
+  LEFT JOIN users u ON b.customer_name = u.username
+
   ORDER BY b.booking_date DESC;
 `);
     
@@ -593,7 +594,7 @@ router.get('/my-bookings', async (req, res) => {
         b.payment_base64, b.payment_url, b.payment_filename, b.payment_mimetype,
         'regular' AS order_type
       FROM bookings b
-      LEFT JOIN users u ON b.customer_email = u.email
+     LEFT JOIN users u ON b.customer_name = u.username
       WHERE LOWER(b.customer_name) = LOWER(?) OR LOWER(b.customer_email) = LOWER(?)
       ORDER BY b.booking_date DESC
     `;
@@ -608,7 +609,7 @@ router.get('/my-bookings', async (req, res) => {
         NULL AS verified_at, NULL AS qr_code_data, 'bundle' AS order_type,
         bo.payment_proof
       FROM bundle_orders bo
-      LEFT JOIN users u ON bo.customer_email = u.email
+      LEFT JOIN users u ON bo.customer_name = u.username
       WHERE LOWER(bo.customer_name) = LOWER(?) OR LOWER(bo.customer_email) = LOWER(?)
       ORDER BY bo.order_date DESC
     `;

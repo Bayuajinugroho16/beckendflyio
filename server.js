@@ -420,7 +420,8 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         b.status, b.payment_filename, b.payment_base64,
         DATE_FORMAT(b.booking_date, '%Y-%m-%d %H:%i') AS booking_date
       FROM bookings b
-      LEFT JOIN users u ON b.customer_email = u.email
+     LEFT JOIN users u ON b.customer_name = u.username
+
       ORDER BY b.booking_date DESC
     `);
 
@@ -441,7 +442,7 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         u.phone AS user_phone,
         bo.payment_proof
       FROM bundle_orders bo
-      LEFT JOIN users u ON bo.customer_email = u.email
+      LEFT JOIN users u ON bo.customer_name = u.username
       ORDER BY bo.id DESC
     `);
 
@@ -570,7 +571,7 @@ app.get('/api/bookings/my-bookings', async (req, res) => {
     const [bookings] = await connection.execute(`
       SELECT b.*, u.phone AS customer_phone
       FROM bookings b
-      LEFT JOIN users u ON b.customer_email = u.email
+      LEFT JOIN users u ON b.customer_name = u.username
       WHERE LOWER(u.username) = LOWER(?)
       ORDER BY b.booking_date DESC
     `, [username]);
