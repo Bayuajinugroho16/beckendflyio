@@ -33,13 +33,12 @@ router.get('/', async (req, res) => {
     
     const [bookings] = await connection.execute(`
       SELECT 
-        id, booking_reference, customer_name, customer_email,customer_address,
-        customer_phone, movie_title, showtime_id, seat_numbers,
-        total_amount, status, booking_date, is_verified,
-        payment_proof, payment_filename, payment_base64,
-        verified_at, verified_by, admin_notes
-      FROM bookings 
-      ORDER BY booking_date DESC
+        b.id, b.booking_reference, b.movie_title, b.showtime_id, b.seat_numbers,
+        b.total_amount, b.status, b.payment_proof, b.booking_date,
+        u.phone AS customer_phone, u.email AS customer_email, u.username AS customer_name
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_email = u.email
+      ORDER BY b.booking_date DESC
     `);
     
     console.log(`✅ Found ${bookings.length} bookings`);
@@ -578,29 +577,31 @@ router.get('/my-bookings', async (req, res) => {
     // ✅ QUERY REGULAR BOOKINGS
     const regularBookingsQuery = `
       SELECT 
-        id, booking_reference, verification_code, customer_name,
-        customer_email, customer_phone, total_amount, seat_numbers,
-        status, booking_date, movie_title, showtime_id, is_verified,
-        verified_at, qr_code_data,
-        payment_base64, payment_url, payment_filename, payment_mimetype,
-        'regular' as order_type
-      FROM bookings 
-      WHERE (LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?))
-        AND booking_reference NOT LIKE 'BUNDLE-%'
-      ORDER BY booking_date DESC
+        b.id, b.booking_reference, b.verification_code,
+        b.customer_name, b.customer_email, u.phone AS customer_phone,
+        b.total_amount, b.seat_numbers, b.status, b.booking_date,
+        b.movie_title, b.showtime_id, b.is_verified, b.verified_at, b.qr_code_data,
+        b.payment_base64, b.payment_url, b.payment_filename, b.payment_mimetype,
+        'regular' AS order_type
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_email = u.email
+      WHERE LOWER(b.customer_name) = LOWER(?) OR LOWER(b.customer_email) = LOWER(?)
+      ORDER BY b.booking_date DESC
     `;
     
     const bundleOrdersQuery = `
       SELECT 
-        id, order_reference as booking_reference, '' as verification_code,
-        customer_name, customer_email, customer_phone, total_price as total_amount,
-        '[]' as seat_numbers, status, order_date as booking_date,
-        bundle_name as movie_title, 0 as showtime_id, 0 as is_verified,
-        NULL as verified_at, NULL as qr_code_data, 'bundle' as order_type,
-        payment_proof
-      FROM bundle_orders 
-      WHERE LOWER(customer_name) = LOWER(?) OR LOWER(customer_email) = LOWER(?)
-      ORDER BY order_date DESC
+        bo.id, bo.order_reference AS booking_reference, '' AS verification_code,
+        bo.customer_name, bo.customer_email, u.phone AS customer_phone,
+        bo.total_price AS total_amount, '[]' AS seat_numbers,
+        bo.status, bo.order_date AS booking_date,
+        bo.bundle_name AS movie_title, 0 AS showtime_id, 0 AS is_verified,
+        NULL AS verified_at, NULL AS qr_code_data, 'bundle' AS order_type,
+        bo.payment_proof
+      FROM bundle_orders bo
+      LEFT JOIN users u ON bo.customer_email = u.email
+      WHERE LOWER(bo.customer_name) = LOWER(?) OR LOWER(bo.customer_email) = LOWER(?)
+      ORDER BY bo.order_date DESC
     `;
     
     const [regularBookings] = await connection.execute(regularBookingsQuery, [username, username]);
