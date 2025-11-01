@@ -134,8 +134,8 @@ app.post('/api/bookings', async (req, res) => {
 
     // Ambil info user dari email login
     const [users] = await connection.execute(
-      'SELECT username, phone FROM users WHERE email = ?',
-      [customer_email]
+  'SELECT username, phone FROM users WHERE username = ?',
+  [username]
     );
     if (users.length === 0) return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
     
@@ -473,7 +473,7 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         total_amount: Number(b.total_amount) || 0,
         has_payment_image: !!paymentUrl,
         payment_url: paymentUrl,
-        phone: b.user_phone || "-", // nomor HP dari users
+        phone: b.customer_phone || b.user_phone || "-"
       };
     });
 
@@ -487,7 +487,7 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         seat_numbers: [],
         has_payment_image: !!b.payment_proof,
         payment_url: b.payment_proof || null,
-        phone: b.user_phone || "-", // nomor HP dari users
+        phone: b.customer_phone || b.user_phone || "-",
         booking_date: b.created_at,
       };
     });
