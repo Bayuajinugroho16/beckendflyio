@@ -758,6 +758,87 @@ app.post("/api/bundle/update-payment-proof", async (req, res) => {
   }
 });
 
+// ==================== DATABASE MANAGEMENT ENDPOINTS ====================
+// GET ALL USERS
+app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    const [users] = await connection.execute(`
+      SELECT id, username, email, role, phone, created_at 
+      FROM users 
+      ORDER BY created_at DESC
+    `);
+    connection.release();
+    res.json({ success: true, data: users });
+  } catch (error) {
+    console.error('❌ Users error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET ALL THEATERS
+app.get('/api/theaters', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    const [theaters] = await connection.execute(`
+      SELECT * FROM theaters 
+      ORDER BY theater_name
+    `);
+    connection.release();
+    res.json({ success: true, data: theaters });
+  } catch (error) {
+    console.error('❌ Theaters error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// GET ALL MOVIES
+app.get('/api/movies', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    const [movies] = await connection.execute(`
+      SELECT * FROM movies 
+      ORDER BY title
+    `);
+    connection.release();
+    res.json({ success: true, data: movies });
+  } catch (error) {
+    console.error('❌ Movies error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+// GET ALL SHOWTIMES WITH DETAILS
+app.get('/api/showtimes', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    const [showtimes] = await connection.execute(`
+      SELECT 
+        s.*, 
+        m.title as movie_title, 
+        t.theater_name,
+        t.location as theater_location
+      FROM showtimes s 
+      LEFT JOIN movies m ON s.movie_id = m.id 
+      LEFT JOIN theaters t ON s.theater_id = t.id 
+      ORDER BY s.showtime DESC
+    `);
+    connection.release();
+    res.json({ success: true, data: showtimes });
+  } catch (error) {
+    console.error('❌ Showtimes error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
 app.get('/api/admin/bundle-orders', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const connection = await pool.promise().getConnection();
@@ -766,6 +847,57 @@ app.get('/api/admin/bundle-orders', authenticateToken, requireAdmin, async (req,
     res.json({ success: true, data: orders });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET DASHBOARD STATISTICS
+app.get('/api/admin/dashboard-stats', authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
+    
+    // Hitung total bookings
+    const [bookingCount] = await connection.execute('SELECT COUNT(*) as count FROM bookings');
+    
+    // Hitung total users
+    const [userCount] = await connection.execute('SELECT COUNT(*) as count FROM users');
+    
+    // Hitung total theaters
+    const [theaterCount] = await connection.execute('SELECT COUNT(*) as count FROM theaters');
+    
+    // Hitung total movies
+    const [movieCount] = await connection.execute('SELECT COUNT(*) as count FROM movies');
+    
+    // Hitung total bundle orders
+    const [bundleCount] = await connection.execute('SELECT COUNT(*) as count FROM bundle_orders');
+    
+    // Hitung pendapatan hari ini
+    const [todayRevenue] = await connection.execute(`
+      SELECT SUM(total_amount) as revenue 
+      FROM bookings 
+      WHERE DATE(booking_date) = CURDATE() AND status = 'confirmed'
+      UNION ALL
+      SELECT SUM(total_price) as revenue 
+      FROM bundle_orders 
+      WHERE DATE(created_at) = CURDATE() AND status = 'confirmed'
+    `);
+    
+    connection.release();
+    
+    const stats = {
+      totalBookings: bookingCount[0].count,
+      totalUsers: userCount[0].count,
+      totalTheaters: theaterCount[0].count,
+      totalMovies: movieCount[0].count,
+      totalBundleOrders: bundleCount[0].count,
+      todayRevenue: todayRevenue[0]?.revenue || 0
+    };
+    
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error('❌ Dashboard stats error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
