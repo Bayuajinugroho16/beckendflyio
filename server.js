@@ -457,103 +457,109 @@ app.post("/api/bundle/upload-payment", async (req, res) => {
   }
 });
 
+
 // Backend: /api/admin/all-bookings
-app.get(
-  "/api/admin/all-bookings",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    let connection;
-    try {
-      connection = await pool.promise().getConnection();
+app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.promise().getConnection();
 
-      // ------------------------------
-      // 1️⃣ Ambil semua bookings reguler
-      // ------------------------------
-      const [bookings] = await connection.execute(`
-        SELECT 
-          b.id, b.booking_reference, b.customer_name, b.customer_email,
-          u.phone AS user_phone,
-          b.movie_title, b.total_amount, b.seat_numbers, 
-          b.status, b.payment_filename, b.payment_base64,
-          DATE_FORMAT(b.booking_date, '%Y-%m-%d %H:%i') AS booking_date
-        FROM bookings b
-        LEFT JOIN users u ON b.customer_email = u.email
-        ORDER BY b.booking_date DESC
-      `);
+    // ------------------------------
+    // 1️⃣ Ambil semua bookings reguler + nomor HP dari users
+    // ------------------------------
+    const [bookings] = await connection.execute(`
+      SELECT 
+        b.id, b.booking_reference, b.customer_name, b.customer_email,
+        u.phone AS user_phone,
+        b.movie_title, b.total_amount, b.seat_numbers, 
+        b.status, b.payment_filename, b.payment_base64,
+        DATE_FORMAT(b.booking_date, '%Y-%m-%d %H:%i') AS booking_date
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_email = u.email
+      ORDER BY b.booking_date DESC
+    `);
 
-      // ------------------------------
-      // 2️⃣ Ambil semua bundle orders
-      // ------------------------------
-      const [bundles] = await connection.execute(`
-        SELECT 
-          bo.*, u.phone AS user_phone
-        FROM bundle_orders bo
-        LEFT JOIN users u ON bo.customer_id = u.id
-        ORDER BY bo.id DESC
-      `);
+    // ------------------------------
+    // 2️⃣ Ambil semua bundle orders + nomor HP dari users
+    // ------------------------------
+    const [bundles] = await connection.execute(`
+      SELECT 
+        bo.id,
+        bo.order_reference,
+        bo.bundle_name,
+        bo.quantity,
+        bo.total_price,
+        bo.customer_name,
+        bo.customer_email,
+        bo.status,
+        bo.created_at,
+        u.phone AS user_phone,
+        bo.payment_proof
+      FROM bundle_orders bo
+      LEFT JOIN users u ON bo.customer_email = u.email
+      ORDER BY bo.id DESC
+    `);
 
-      connection.release();
+    connection.release();
 
-      // ------------------------------
-      // 3️⃣ Format bookings reguler
-      // ------------------------------
-      const formattedBookings = bookings.map((b) => {
-        let seats;
-        try {
-          seats = JSON.parse(b.seat_numbers);
-          if (!Array.isArray(seats)) seats = [seats];
-        } catch {
-          seats =
-            typeof b.seat_numbers === "string"
-              ? b.seat_numbers.split(",").map((s) => s.trim())
-              : [b.seat_numbers];
-        }
+    // ------------------------------
+    // 3️⃣ Format bookings reguler
+    // ------------------------------
+    const formattedBookings = bookings.map((b) => {
+      let seats;
+      try {
+        seats = JSON.parse(b.seat_numbers);
+        if (!Array.isArray(seats)) seats = [seats];
+      } catch {
+        seats =
+          typeof b.seat_numbers === "string"
+            ? b.seat_numbers.split(",").map((s) => s.trim())
+            : [b.seat_numbers];
+      }
 
-        let paymentUrl =
-          b.payment_proof ||
-          (b.payment_base64 ? `data:image/jpeg;base64,${b.payment_base64}` : null);
+      let paymentUrl =
+        b.payment_proof ||
+        (b.payment_base64 ? `data:image/jpeg;base64,${b.payment_base64}` : null);
 
-        return {
-          ...b,
-          seat_numbers: seats,
-          total_amount: Number(b.total_amount) || 0,
-          has_payment_image: !!paymentUrl,
-          payment_url: paymentUrl,
-          phone: b.user_phone || b.customer_phone || "-",
-        };
-      });
+      return {
+        ...b,
+        seat_numbers: seats,
+        total_amount: Number(b.total_amount) || 0,
+        has_payment_image: !!paymentUrl,
+        payment_url: paymentUrl,
+        phone: b.user_phone || "-", // nomor HP dari users
+      };
+    });
 
-      // ------------------------------
-      // 4️⃣ Format bundle orders
-      // ------------------------------
-      const formattedBundles = bundles.map((b) => {
-        let paymentUrl = b.payment_proof || null;
-        return {
-          ...b,
-          total_amount: Number(b.total_amount || b.quantity) || 0,
-          seat_numbers: [],
-          has_payment_image: !!paymentUrl,
-          payment_url: paymentUrl,
-          phone: b.user_phone || b.customer_phone || "-",
-          booking_date: b.created_at,
-        };
-      });
+    // ------------------------------
+    // 4️⃣ Format bundle orders
+    // ------------------------------
+    const formattedBundles = bundles.map((b) => {
+      return {
+        ...b,
+        total_amount: Number(b.total_price) || 0,
+        seat_numbers: [],
+        has_payment_image: !!b.payment_proof,
+        payment_url: b.payment_proof || null,
+        phone: b.user_phone || "-", // nomor HP dari users
+        booking_date: b.created_at,
+      };
+    });
 
-      // ------------------------------
-      // 5️⃣ Kirim response
-      // ------------------------------
-      res.json({
-        success: true,
-        data: { bookings: formattedBookings, bundleOrders: formattedBundles },
-      });
-    } catch (err) {
-      if (connection) connection.release();
-      console.error("❌ /admin/all-bookings error:", err);
-      res.status(500).json({ success: false, message: err.message });
-    }
+    // ------------------------------
+    // 5️⃣ Kirim response
+    // ------------------------------
+    res.json({
+      success: true,
+      data: { bookings: formattedBookings, bundleOrders: formattedBundles },
+    });
+  } catch (err) {
+    if (connection) connection.release();
+    console.error("❌ /admin/all-bookings error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
-);
+});
+
 
 
 
