@@ -403,7 +403,6 @@ app.post("/api/bundle/upload-payment", async (req, res) => {
 });
 
 
-// Backend: /api/admin/all-bookings
 app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, res) => {
   let connection;
   try {
@@ -420,8 +419,8 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         b.status, b.payment_filename, b.payment_base64,
         DATE_FORMAT(b.booking_date, '%Y-%m-%d %H:%i') AS booking_date
       FROM bookings b
-     LEFT JOIN users u ON b.customer_name = u.username
-
+      LEFT JOIN users u 
+        ON LOWER(TRIM(b.customer_name)) = LOWER(TRIM(u.username))
       ORDER BY b.booking_date DESC
     `);
 
@@ -442,7 +441,8 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         u.phone AS user_phone,
         bo.payment_proof
       FROM bundle_orders bo
-      LEFT JOIN users u ON bo.customer_name = u.username
+      LEFT JOIN users u 
+        ON LOWER(TRIM(bo.customer_name)) = LOWER(TRIM(u.username))
       ORDER BY bo.id DESC
     `);
 
@@ -473,7 +473,7 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         total_amount: Number(b.total_amount) || 0,
         has_payment_image: !!paymentUrl,
         payment_url: paymentUrl,
-        phone: b.customer_phone || b.user_phone || "-"
+        phone: b.user_phone || "-"
       };
     });
 
@@ -487,7 +487,7 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
         seat_numbers: [],
         has_payment_image: !!b.payment_proof,
         payment_url: b.payment_proof || null,
-        phone: b.customer_phone || b.user_phone || "-",
+        phone: b.user_phone || "-",
         booking_date: b.created_at,
       };
     });
@@ -505,6 +505,7 @@ app.get("/api/admin/all-bookings", authenticateToken, requireAdmin, async (req, 
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
 
 
 
