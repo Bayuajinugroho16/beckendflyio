@@ -32,14 +32,23 @@ router.get('/', async (req, res) => {
     connection = await pool.promise().getConnection();
     
     const [bookings] = await connection.execute(`
-      SELECT 
-        b.id, b.booking_reference, b.movie_title, b.showtime_id, b.seat_numbers,
-        b.total_amount, b.status, b.payment_proof, b.booking_date,
-        u.phone AS customer_phone, u.email AS customer_email, u.username AS customer_name
-      FROM bookings b
-      LEFT JOIN users u ON b.customer_email = u.email
-      ORDER BY b.booking_date DESC
-    `);
+  SELECT 
+    b.id,
+    b.booking_reference,
+    b.movie_title,
+    b.showtime_id,
+    b.seat_numbers,
+    b.total_amount,
+    b.status,
+    b.payment_proof,
+    b.booking_date,
+    u.username AS customer_name,
+    u.email AS customer_email,
+    u.phone AS customer_phone
+  FROM bookings b
+  LEFT JOIN users u ON b.customer_email = u.email
+  ORDER BY b.booking_date DESC;
+`);
     
     console.log(`✅ Found ${bookings.length} bookings`);
     

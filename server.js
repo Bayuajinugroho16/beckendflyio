@@ -124,107 +124,52 @@ app.get('/api/bookings/occupied-seats', async (req, res) => {
 app.post('/api/bookings', async (req, res) => {
   let connection;
   try {
-    const {
-      showtime_id,
-      customer_name,
-      customer_email,
-      customer_phone,
-      seat_numbers,
-      total_amount,
-      movie_title
-    } = req.body;
+    const { showtime_id, customer_email, seat_numbers, total_amount, movie_title } = req.body;
 
-    // === VALIDASI FIELD WAJIB ===
-    if (!showtime_id || !customer_name || !customer_email || !seat_numbers || !total_amount) {
-      console.log('❌ Missing fields:', req.body);
-      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    if (!customer_email || !movie_title || !total_amount) {
+      return res.status(400).json({ success: false, message: 'Data tidak lengkap' });
     }
 
-    // === PASTIKAN TIPE DATA BENAR ===
-    const showtimeIdNum = Number(showtime_id);
-    const totalAmountNum = Number(total_amount);
-    if (isNaN(showtimeIdNum) || isNaN(totalAmountNum)) {
-      console.log('❌ Invalid numeric fields:', { showtime_id, total_amount });
-      return res.status(400).json({ success: false, message: 'showtime_id and total_amount must be numbers' });
-    }
-
-    // === PASTIKAN SEAT NUMBERS ARRAY ===
-    const seatsArray = Array.isArray(seat_numbers)
-      ? seat_numbers
-      : seat_numbers.split(',').map(s => s.trim());
-
-    // === CONNECT DB ===
     connection = await pool.promise().getConnection();
 
-    // === GENERATE REFERENCE & VERIFICATION CODE ===
-    const booking_reference = 'BK' + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();
-    const verification_code = Math.floor(100000 + Math.random() * 900000).toString();
+    // Ambil info user dari email login
+    const [users] = await connection.execute(
+      'SELECT username, phone FROM users WHERE email = ?',
+      [customer_email]
+    );
+    if (users.length === 0) return res.status(404).json({ success: false, message: 'User tidak ditemukan' });
+    
+    const user = users[0];
 
-    // === LOG DATA SEBELUM INSERT ===
-    console.log('📝 Inserting booking:', {
-      showtimeIdNum,
-      customer_name,
-      customer_email,
-      customer_phone,
-      seatsArray,
-      totalAmountNum,
-      movie_title,
-      booking_reference
-    });
+    const seatNumbersJson = JSON.stringify(seat_numbers || []);
 
-    // === QUERY INSERT ===
-    const query = `
-      INSERT INTO bookings 
-      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, booking_reference, verification_code, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    `;
-    const [result] = await connection.execute(query, [
-      showtimeIdNum,
-      customer_name,
-      customer_email,
-      customer_phone || null,
-      JSON.stringify(seatsArray),
-      totalAmountNum,
-      movie_title || null,
-      booking_reference,
-      verification_code
-    ]);
+    const [result] = await connection.execute(
+      `INSERT INTO bookings 
+      (showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [showtime_id, user.username, customer_email, user.phone, seatNumbersJson, total_amount, movie_title]
+    );
 
-    // === LOG RESULT INSERT ===
-    console.log('✅ Insert result:', result);
-
-    const bookingId = result.insertId;
-    const [newBookings] = await connection.execute('SELECT * FROM bookings WHERE id = ?', [bookingId]);
-    connection.release();
-
-    const newBooking = newBookings[0];
-    let parsedSeatNumbers;
-    try { parsedSeatNumbers = JSON.parse(newBooking.seat_numbers); } 
-    catch (e) { parsedSeatNumbers = [newBooking.seat_numbers]; }
-
-    res.status(201).json({
+    res.json({
       success: true,
-      message: 'Booking created successfully',
+      message: 'Booking berhasil dibuat',
       data: {
-        id: newBooking.id,
-        booking_reference: newBooking.booking_reference,
-        verification_code: newBooking.verification_code,
-        customer_name: newBooking.customer_name,
-        customer_email: newBooking.customer_email,
-        customer_phone: newBooking.customer_phone,
-        total_amount: newBooking.total_amount,
-        seat_numbers: parsedSeatNumbers,
-        status: newBooking.status,
-        booking_date: newBooking.booking_date,
-        movie_title: newBooking.movie_title,
-        showtime_id: newBooking.showtime_id
+        id: result.insertId,
+        customer_name: user.username,
+        customer_email,
+        customer_phone: user.phone,
+        movie_title,
+        seat_numbers,
+        total_amount,
+        status: 'pending'
       }
     });
 
   } catch (error) {
-    console.error('❌ Booking creation error:', error);
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to create booking: ' + error.message });
   }
 });
 // ==================== PAYMENT & VERIFICATION ENDPOINTS ====================
@@ -615,21 +560,29 @@ app.get('/api/bookings/bundle-orders', async (req, res) => {
 });
 
 app.get('/api/bookings/my-bookings', async (req, res) => {
+  let connection;
   try {
-    const { username, email } = req.query;
-    if (!username && !email) return res.status(400).json({ success: false, message: 'Username or email required' });
-    const connection = await pool.promise().getConnection();
-    let query = `SELECT id, booking_reference, customer_name, customer_email, movie_title, total_amount, seat_numbers, status, payment_proof, payment_filename, payment_base64 IS NOT NULL as has_payment_image, booking_date FROM bookings WHERE status != 'cancelled'`;
-    const params = [];
-    if (username) { query += ' AND customer_name = ?'; params.push(username); }
-    if (email) { query += ' AND customer_email = ?'; params.push(email); }
-    query += ' ORDER BY booking_date DESC';
-    const [bookings] = await connection.execute(query, params);
-    connection.release();
-    res.json({ success: true, data: bookings });
-  } catch (error) { console.error('❌ My bookings error:', error); res.status(500).json({ success: false, message: 'Failed to fetch bookings: ' + error.message }); }
-});
+    const username = req.query.username;
+    if (!username) return res.status(400).json({ success: false, message: 'Username wajib diisi' });
 
+    connection = await pool.promise().getConnection();
+
+    const [bookings] = await connection.execute(`
+      SELECT b.*, u.phone AS customer_phone
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_email = u.email
+      WHERE LOWER(u.username) = LOWER(?)
+      ORDER BY b.booking_date DESC
+    `, [username]);
+
+    res.json({ success: true, data: bookings });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
 // Ambil semua tiket user (bookings + bundle orders)
 app.get('/api/bookings/my-tickets', async (req, res) => {
   try {
