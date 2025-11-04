@@ -223,14 +223,24 @@ app.get('/api/bookings/occupied-seats', async (req,res) => {
   }
 });
 
-// CREATE BOOKING - PERBAIKI
+// CREATE BOOKING - PERBAIKI DENGAN VERIFICATION CODE
 app.post('/api/bookings', async (req,res) => {
   const { showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title } = req.body;
+  
   if(!customer_name || !customer_email || !movie_title || !total_amount || !seat_numbers)
     return res.status(400).json({ success:false, message:'Missing required fields' });
 
+  // ✅ GENERATE VERIFICATION CODE
   const booking_reference = `BK${Date.now()}${Math.random().toString(36).substring(2,7).toUpperCase()}`;
+  const verification_code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
   const seatNumbersJson = JSON.stringify(Array.isArray(seat_numbers)?seat_numbers:[seat_numbers]);
+
+  console.log('📦 Creating booking:', { 
+    booking_reference, 
+    verification_code,
+    customer_name, 
+    movie_title 
+  });
 
   try {
     const { data, error } = await supabase.from('bookings').insert([{
@@ -242,17 +252,28 @@ app.post('/api/bookings', async (req,res) => {
       total_amount,
       movie_title,
       booking_reference,
+      verification_code, // ✅ TAMBAHKAN INI
       status: 'pending',
       booking_date: new Date()
-    }]).select(); // ✅ TAMBAH .select()
+    }]).select();
 
     if(error) throw error;
     if(!data || !data.length) throw new Error('Failed to create booking');
 
-    res.json({ success:true, message:'Booking created', data:data[0] });
+    console.log('✅ Booking created successfully:', data[0].booking_reference);
+    
+    res.json({ 
+      success: true, 
+      message: 'Booking created successfully', 
+      data: data[0] 
+    });
+    
   } catch(err) {
-    console.error('Booking error:', err);
-    res.status(500).json({ success:false, message:err.message });
+    console.error('❌ Booking error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Gagal membuat booking: ' + err.message 
+    });
   }
 });
 
