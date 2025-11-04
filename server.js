@@ -140,28 +140,56 @@ app.post('/api/auth/register', async (req,res) => {
   }
 });
 
-// REGISTER - PERBAIKI
-app.post('/api/auth/register', async (req,res) => {
-  const { username,email,password,role } = req.body;
-  if(!username || !email || !password) return res.status(400).json({ success:false, message:'Required fields missing' });
+// LOGIN - TAMBAHKAN INI
+app.post('/api/auth/login', async (req,res) => {
+  const { username, password } = req.body;
+  console.log('🔐 Login attempt:', { username });
+  
+  if(!username || !password) return res.status(400).json({ success:false, message:'Username & password required' });
 
   try {
-    const { data: existing, error: existError } = await supabase.from('users').select('*').eq('username',username);
-    if(existError) throw existError;
-    if(existing && existing.length) return res.status(400).json({ success:false, message:'Username already exists' });
-
-    const hashed = await bcrypt.hash(password,10);
-    const { data, error } = await supabase.from('users').insert([{
-      username,email,password:hashed,role:role||'user',created_at:new Date()
-    }]).select(); // ✅ TAMBAH .select() UNTUK DAPAT DATA KEMBALI
-
+    const { data: users, error } = await supabase.from('users').select('*').eq('username', username);
+    console.log('📊 Users found:', users);
+    
     if(error) throw error;
-    if(!data || !data.length) throw new Error('Failed to create user');
+    if(!users || !users.length) return res.status(401).json({ success:false, message:'User not found' });
 
-    res.json({ success:true, message:'User registered', data:data[0] });
+    const user = users[0];
+    console.log('👤 User data:', { 
+      id: user.id, 
+      username: user.username,
+      hasPassword: !!user.password 
+    });
+
+    const valid = await bcrypt.compare(password, user.password);
+    console.log('🔑 Password valid:', valid);
+    
+    if(!valid) return res.status(401).json({ success:false, message:'Invalid password' });
+
+    const token = jwt.sign({ 
+      userId: user.id, 
+      username: user.username, 
+      role: user.role 
+    }, process.env.JWT_SECRET || 'fallback-secret', { expiresIn: '24h' });
+    
+    console.log('✅ Login successful, token generated');
+    
+    res.json({ 
+      success: true, 
+      message: 'Login success', 
+      data: { 
+        user: {
+          id: user.id, 
+          username: user.username, 
+          role: user.role 
+        }, 
+        token 
+      } 
+    });
+    
   } catch(err) {
-    console.error('Register error:', err);
-    res.status(500).json({ success:false, message:err.message });
+    console.error('❌ Login error:', err);
+    res.status(500).json({ success:false, message: err.message });
   }
 });
 
