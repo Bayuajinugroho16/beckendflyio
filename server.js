@@ -115,7 +115,7 @@ cron.schedule('*/5 * * * *', async () => {
 
 // ==================== AUTH ROUTES ====================
 
-// REGISTER
+// REGISTER - PERBAIKI
 app.post('/api/auth/register', async (req,res) => {
   const { username,email,password,role } = req.body;
   if(!username || !email || !password) return res.status(400).json({ success:false, message:'Required fields missing' });
@@ -123,39 +123,44 @@ app.post('/api/auth/register', async (req,res) => {
   try {
     const { data: existing, error: existError } = await supabase.from('users').select('*').eq('username',username);
     if(existError) throw existError;
-    if(existing.length) return res.status(400).json({ success:false, message:'Username already exists' });
+    if(existing && existing.length) return res.status(400).json({ success:false, message:'Username already exists' });
 
     const hashed = await bcrypt.hash(password,10);
     const { data, error } = await supabase.from('users').insert([{
       username,email,password:hashed,role:role||'user',created_at:new Date()
-    }]);
+    }]).select(); // ✅ TAMBAH .select() UNTUK DAPAT DATA KEMBALI
+
     if(error) throw error;
+    if(!data || !data.length) throw new Error('Failed to create user');
 
     res.json({ success:true, message:'User registered', data:data[0] });
   } catch(err) {
-    console.error(err);
+    console.error('Register error:', err);
     res.status(500).json({ success:false, message:err.message });
   }
 });
 
-// LOGIN
-app.post('/api/auth/login', async (req,res) => {
-  const { username, password } = req.body;
-  if(!username || !password) return res.status(400).json({ success:false, message:'Username & password required' });
+// REGISTER - PERBAIKI
+app.post('/api/auth/register', async (req,res) => {
+  const { username,email,password,role } = req.body;
+  if(!username || !email || !password) return res.status(400).json({ success:false, message:'Required fields missing' });
 
   try {
-    const { data: users, error } = await supabase.from('users').select('*').eq('username', username);
+    const { data: existing, error: existError } = await supabase.from('users').select('*').eq('username',username);
+    if(existError) throw existError;
+    if(existing && existing.length) return res.status(400).json({ success:false, message:'Username already exists' });
+
+    const hashed = await bcrypt.hash(password,10);
+    const { data, error } = await supabase.from('users').insert([{
+      username,email,password:hashed,role:role||'user',created_at:new Date()
+    }]).select(); // ✅ TAMBAH .select() UNTUK DAPAT DATA KEMBALI
+
     if(error) throw error;
-    if(!users.length) return res.status(401).json({ success:false, message:'User not found' });
+    if(!data || !data.length) throw new Error('Failed to create user');
 
-    const user = users[0];
-    const valid = await bcrypt.compare(password, user.password);
-    if(!valid) return res.status(401).json({ success:false, message:'Invalid password' });
-
-    const token = jwt.sign({ userId: user.id, username:user.username, role:user.role }, process.env.JWT_SECRET||'fallback-secret',{expiresIn:'24h'});
-    res.json({ success:true, message:'Login success', data:{ user:{id:user.id, username:user.username, role:user.role}, token } });
+    res.json({ success:true, message:'User registered', data:data[0] });
   } catch(err) {
-    console.error(err);
+    console.error('Register error:', err);
     res.status(500).json({ success:false, message:err.message });
   }
 });
@@ -190,7 +195,7 @@ app.get('/api/bookings/occupied-seats', async (req,res) => {
   }
 });
 
-// CREATE BOOKING
+// CREATE BOOKING - PERBAIKI
 app.post('/api/bookings', async (req,res) => {
   const { showtime_id, customer_name, customer_email, customer_phone, seat_numbers, total_amount, movie_title } = req.body;
   if(!customer_name || !customer_email || !movie_title || !total_amount || !seat_numbers)
@@ -211,12 +216,14 @@ app.post('/api/bookings', async (req,res) => {
       booking_reference,
       status: 'pending',
       booking_date: new Date()
-    }]);
+    }]).select(); // ✅ TAMBAH .select()
+
     if(error) throw error;
+    if(!data || !data.length) throw new Error('Failed to create booking');
 
     res.json({ success:true, message:'Booking created', data:data[0] });
   } catch(err) {
-    console.error(err);
+    console.error('Booking error:', err);
     res.status(500).json({ success:false, message:err.message });
   }
 });
@@ -288,7 +295,7 @@ app.get('/api/bookings/my', authenticateToken, async (req,res) => {
 
 // ==================== BUNDLE ORDERS ====================
 
-// CREATE BUNDLE ORDER
+// CREATE BUNDLE ORDER - PERBAIKI
 app.post('/api/bundles', authenticateToken, async (req,res) => {
   const { bundle_id,bundle_name,bundle_description,bundle_price,original_price,savings,quantity,total_price,customer_name,customer_phone,customer_email } = req.body;
   if(!bundle_name || !bundle_price || !customer_name) return res.status(400).json({ success:false, message:'Missing fields' });
@@ -298,12 +305,14 @@ app.post('/api/bundles', authenticateToken, async (req,res) => {
     const { data, error } = await supabase.from('bundle_orders').insert([{
       order_reference,bundle_id,bundle_name,bundle_description,bundle_price,original_price,savings,quantity,total_price,
       customer_name,customer_phone,customer_email,status:'pending',order_date:new Date()
-    }]);
+    }]).select(); // ✅ TAMBAH .select()
+
     if(error) throw error;
+    if(!data || !data.length) throw new Error('Failed to create bundle order');
 
     res.json({ success:true, message:'Bundle order created', data:data[0] });
   } catch(err) {
-    console.error(err);
+    console.error('Bundle error:', err);
     res.status(500).json({ success:false, message:err.message });
   }
 });
